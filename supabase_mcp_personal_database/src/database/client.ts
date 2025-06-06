@@ -1,0 +1,82 @@
+import { createClient } from '@supabase/supabase-js';
+import type { Database } from './types.js';
+
+function validateEnvironmentVariables() {
+  if (!process.env.SUPABASE_URL) {
+    throw new Error('Missing SUPABASE_URL environment variable');
+  }
+
+  if (!process.env.SUPABASE_ANON_KEY) {
+    throw new Error('Missing SUPABASE_ANON_KEY environment variable');
+  }
+
+  if (!process.env.SUPABASE_SERVICE_ROLE_KEY) {
+    throw new Error('Missing SUPABASE_SERVICE_ROLE_KEY environment variable');
+  }
+}
+
+const supabaseConfig = {
+  auth: {
+    persistSession: false, // Stateless for better scaling
+    detectSessionInUrl: false
+  }
+};
+
+function createSupabaseClients() {
+  validateEnvironmentVariables();
+  
+  return {
+    supabaseAnon: createClient<Database>(
+      process.env.SUPABASE_URL!,
+      process.env.SUPABASE_ANON_KEY!,
+      supabaseConfig
+    ),
+    supabaseAdmin: createClient<Database>(
+      process.env.SUPABASE_URL!,
+      process.env.SUPABASE_SERVICE_ROLE_KEY!,
+      supabaseConfig
+    )
+  };
+}
+
+let clients: ReturnType<typeof createSupabaseClients> | null = null;
+
+function getClients() {
+  if (!clients) {
+    clients = createSupabaseClients();
+  }
+  return clients;
+}
+
+export const supabaseAnon = new Proxy({} as ReturnType<typeof createSupabaseClients>['supabaseAnon'], {
+  get(target, prop) {
+    return getClients().supabaseAnon[prop as keyof typeof target];
+  }
+});
+
+export const supabaseAdmin = new Proxy({} as ReturnType<typeof createSupabaseClients>['supabaseAdmin'], {
+  get(target, prop) {
+    return getClients().supabaseAdmin[prop as keyof typeof target];
+  }
+});
+
+// Initialize database connection and verify tables exist
+export async function initializeDatabase(): Promise<void> {
+  try {
+    // Test connection with a simple query
+    const { error } = await supabaseAdmin
+      .from('personal_data')
+      .select('id')
+      .limit(1);
+
+    if (error) {
+      console.error('Database connection failed:', error.message);
+      throw new Error(`Database initialization failed: ${error.message}`);
+    }
+
+    console.error('Database connection successful');
+  } catch (error) {
+    console.error('Failed to initialize database:', error);
+    throw error;
+  }
+}
