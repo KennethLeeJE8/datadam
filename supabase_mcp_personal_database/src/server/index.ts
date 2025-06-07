@@ -16,6 +16,8 @@ import { setupPersonalDataTools } from './tools/index.js';
 import { setupPersonalDataResources } from './resources/index.js';
 import { setupPersonalDataPrompts } from './prompts/index.js';
 import { initializeDatabase } from '../database/client.js';
+import { logger, ErrorCategory } from '../utils/logger.js';
+import { errorMonitoring } from '../utils/monitoring.js';
 
 dotenv.config();
 
@@ -308,16 +310,68 @@ class PersonalDataMCPServer {
   }
 
   async run(): Promise<void> {
-    // Initialize database connection
-    await initializeDatabase();
+    try {
+      logger.info('Starting Personal Data MCP Server');
+      
+      // Initialize database connection
+      await initializeDatabase();
+      logger.info('Database initialized successfully');
 
-    const transport = new StdioServerTransport();
-    await this.server.connect(transport);
+      const transport = new StdioServerTransport();
+      await this.server.connect(transport);
 
-    console.error('Personal Data MCP Server running on stdio');
+      logger.info('Personal Data MCP Server running on stdio');
+      console.error('Server started - Personal Data MCP Server running on stdio');
+    } catch (error) {
+      logger.critical(
+        'Failed to start Personal Data MCP Server',
+        error as Error,
+        ErrorCategory.SYSTEM
+      );
+      throw error;
+    }
   }
 }
 
 // Run the server
 const server = new PersonalDataMCPServer();
-server.run().catch(console.error);
+server.run().catch((error) => {
+  logger.critical(
+    'Server startup failed',
+    error,
+    ErrorCategory.SYSTEM
+  );
+  console.error(error);
+  process.exit(1);
+});
+
+// Graceful shutdown handling
+process.on('SIGINT', () => {
+  logger.info('Received SIGINT, shutting down gracefully');
+  errorMonitoring.stop();
+  process.exit(0);
+});
+
+process.on('SIGTERM', () => {
+  logger.info('Received SIGTERM, shutting down gracefully');
+  errorMonitoring.stop();
+  process.exit(0);
+});
+
+process.on('unhandledRejection', (reason, promise) => {
+  logger.critical(
+    'Unhandled Promise Rejection',
+    reason as Error,
+    ErrorCategory.SYSTEM,
+    { promise: promise.toString() }
+  );
+});
+
+process.on('uncaughtException', (error) => {
+  logger.critical(
+    'Uncaught Exception',
+    error,
+    ErrorCategory.SYSTEM
+  );
+  process.exit(1);
+});

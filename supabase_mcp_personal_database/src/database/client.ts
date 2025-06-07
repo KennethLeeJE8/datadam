@@ -60,6 +60,9 @@ export const supabaseAdmin = new Proxy({} as ReturnType<typeof createSupabaseCli
   }
 });
 
+// Export supabase as an alias for supabaseAdmin for backward compatibility
+export const supabase = supabaseAdmin;
+
 // Initialize database connection and verify tables exist
 export async function initializeDatabase(): Promise<void> {
   try {

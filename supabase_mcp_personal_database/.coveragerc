@@ -1,0 +1,25 @@
+[run]
+source = src
+omit = 
+    */tests/*
+    */test_*
+    */node_modules/*
+    */dist/*
+    */coverage/*
+    */__tests__/*
+    */.env*
+
+[report]
+exclude_lines =
+    pragma: no cover
+    def __repr__
+    raise AssertionError
+    raise NotImplementedError
+    if __name__ == .__main__.:
+    @abstract
+
+[html]
+directory = coverage/html
+
+[xml]
+output = coverage/coverage.xml

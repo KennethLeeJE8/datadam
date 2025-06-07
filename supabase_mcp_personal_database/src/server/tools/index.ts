@@ -4,6 +4,8 @@ import { z } from 'zod';
 
 import { supabaseAdmin } from '../../database/client.js';
 import { logDataAccess } from '../../security/audit.js';
+import { createRequestLogger, ErrorCategory } from '../../utils/logger.js';
+import { errorRecovery } from '../../utils/errorRecovery.js';
 
 // Input validation schemas
 const ExtractPersonalDataSchema = z.object({
@@ -51,36 +53,107 @@ const AddPersonalDataFieldSchema = z.object({
 export function setupPersonalDataTools(server: Server): void {
   server.setRequestHandler(CallToolRequestSchema, async (request) => {
     const { name, arguments: args } = request.params;
+    const requestId = `req_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+    const sessionId = (args as any)?.session_id || 'default';
+    const requestLogger = createRequestLogger(requestId, sessionId);
+    
+    requestLogger.info(`Tool request started: ${name}`, {
+      toolName: name,
+      operation: 'tool_call',
+    });
 
     try {
+      let result;
+      const startTime = Date.now();
+
       switch (name) {
         case 'extract_personal_data':
-          return await handleExtractPersonalData(args);
+          result = await handleExtractPersonalData(args, requestLogger);
+          break;
 
         case 'create_personal_data':
-          return await handleCreatePersonalData(args);
+          result = await handleCreatePersonalData(args, requestLogger);
+          break;
 
         case 'update_personal_data':
-          return await handleUpdatePersonalData(args);
+          result = await handleUpdatePersonalData(args, requestLogger);
+          break;
 
         case 'delete_personal_data':
-          return await handleDeletePersonalData(args);
+          result = await handleDeletePersonalData(args, requestLogger);
+          break;
 
         case 'search_personal_data':
-          return await handleSearchPersonalData(args);
+          result = await handleSearchPersonalData(args, requestLogger);
+          break;
 
         case 'add_personal_data_field':
-          return await handleAddPersonalDataField(args);
+          result = await handleAddPersonalDataField(args, requestLogger);
+          break;
 
         default:
           throw new Error(`Unknown tool: ${name}`);
       }
+
+      const duration = Date.now() - startTime;
+      requestLogger.info(`Tool request completed: ${name}`, {
+        toolName: name,
+        operation: 'tool_call',
+        duration,
+      });
+
+      return result;
     } catch (error) {
+      const toolError = error as Error;
+      requestLogger.error(
+        `Tool request failed: ${name}`,
+        toolError,
+        ErrorCategory.BUSINESS_LOGIC,
+        {
+          toolName: name,
+          operation: 'tool_call',
+        }
+      );
+
+      // Attempt error recovery
+      const recoveryResult = await errorRecovery.attemptRecovery(
+        toolError,
+        {
+          toolName: name,
+          operation: 'tool_call',
+          requestId,
+          sessionId,
+          metadata: { args },
+        },
+        requestLogger.getCorrelationId()
+      );
+
+      if (recoveryResult.success && recoveryResult.data) {
+        requestLogger.info(`Error recovery succeeded for tool: ${name}`, {
+          toolName: name,
+          recoveryStrategy: 'auto_recovery',
+        });
+        
+        return {
+          content: [
+            {
+              type: 'text',
+              text: JSON.stringify({
+                warning: 'Request completed with fallback data',
+                data: recoveryResult.data,
+                message: recoveryResult.message,
+              }, null, 2),
+            },
+          ],
+          isError: false,
+        };
+      }
+
       return {
         content: [
           {
             type: 'text',
-            text: `Error: ${error instanceof Error ? error.message : 'Unknown error'}`,
+            text: `Error: ${toolError.message}`,
           },
         ],
         isError: true,
@@ -89,60 +162,85 @@ export function setupPersonalDataTools(server: Server): void {
   });
 }
 
-async function handleExtractPersonalData(args: unknown) {
-  const params = ExtractPersonalDataSchema.parse(args);
-  
-  let query = supabaseAdmin
-    .from('personal_data')
-    .select('*')
-    .eq('user_id', params.user_id);
-
-  if (params.data_types && params.data_types.length > 0) {
-    query = query.in('data_type', params.data_types);
-  }
-
-  if (params.filters) {
-    Object.entries(params.filters).forEach(([key, value]) => {
-      if (key === 'tags') {
-        query = query.contains('tags', [value]);
-      } else if (key === 'classification') {
-        query = query.eq('classification', value);
-      } else if (key === 'date_from') {
-        query = query.gte('created_at', value);
-      } else if (key === 'date_to') {
-        query = query.lte('created_at', value);
-      }
+async function handleExtractPersonalData(args: unknown, requestLogger: any) {
+  try {
+    const params = ExtractPersonalDataSchema.parse(args);
+    requestLogger.debug('Validation passed for extract_personal_data', {
+      userId: params.user_id,
     });
+    
+    let query = supabaseAdmin
+      .from('personal_data')
+      .select('*')
+      .eq('user_id', params.user_id);
+
+    if (params.data_types && params.data_types.length > 0) {
+      query = query.in('data_type', params.data_types);
+    }
+
+    if (params.filters) {
+      Object.entries(params.filters).forEach(([key, value]) => {
+        if (key === 'tags') {
+          query = query.contains('tags', [value]);
+        } else if (key === 'classification') {
+          query = query.eq('classification', value);
+        } else if (key === 'date_from') {
+          query = query.gte('created_at', value);
+        } else if (key === 'date_to') {
+          query = query.lte('created_at', value);
+        }
+      });
+    }
+
+    const { data, error, count } = await query
+      .range(params.offset, params.offset + params.limit - 1)
+      .order('created_at', { ascending: false });
+
+    if (error) {
+      requestLogger.error(
+        'Database query failed in extract_personal_data',
+        error as Error,
+        ErrorCategory.DATABASE,
+        { userId: params.user_id }
+      );
+      throw new Error(`Database error: ${error.message}`);
+    }
+
+    // Log the data access
+    await logDataAccess(params.user_id, 'READ', 'personal_data');
+    
+    requestLogger.info('Data extraction completed', {
+      userId: params.user_id,
+      recordCount: data?.length || 0,
+    });
+
+    return {
+      content: [
+        {
+          type: 'text',
+          text: JSON.stringify({
+            data,
+            pagination: {
+              offset: params.offset,
+              limit: params.limit,
+              total: count,
+            },
+            extracted_at: new Date().toISOString(),
+          }, null, 2),
+        },
+      ],
+    };
+  } catch (validationError) {
+    requestLogger.error(
+      'Validation failed for extract_personal_data',
+      validationError as Error,
+      ErrorCategory.VALIDATION
+    );
+    throw validationError;
   }
-
-  const { data, error, count } = await query
-    .range(params.offset, params.offset + params.limit - 1)
-    .order('created_at', { ascending: false });
-
-  if (error) throw new Error(`Database error: ${error.message}`);
-
-  // Log the data access
-  await logDataAccess(params.user_id, 'READ', 'personal_data');
-
-  return {
-    content: [
-      {
-        type: 'text',
-        text: JSON.stringify({
-          data,
-          pagination: {
-            offset: params.offset,
-            limit: params.limit,
-            total: count,
-          },
-          extracted_at: new Date().toISOString(),
-        }, null, 2),
-      },
-    ],
-  };
 }
 
-async function handleCreatePersonalData(args: unknown) {
+async function handleCreatePersonalData(args: unknown, requestLogger: any) {
   const params = CreatePersonalDataSchema.parse(args);
 
   const { data, error } = await supabaseAdmin
@@ -177,7 +275,7 @@ async function handleCreatePersonalData(args: unknown) {
   };
 }
 
-async function handleUpdatePersonalData(args: unknown) {
+async function handleUpdatePersonalData(args: unknown, requestLogger: any) {
   const params = UpdatePersonalDataSchema.parse(args);
 
   // First, get the current record to log changes
@@ -224,7 +322,7 @@ async function handleUpdatePersonalData(args: unknown) {
   };
 }
 
-async function handleDeletePersonalData(args: unknown) {
+async function handleDeletePersonalData(args: unknown, requestLogger: any) {
   const params = DeletePersonalDataSchema.parse(args);
 
   // Get records before deletion for audit logging
@@ -282,7 +380,7 @@ async function handleDeletePersonalData(args: unknown) {
   };
 }
 
-async function handleSearchPersonalData(args: unknown) {
+async function handleSearchPersonalData(args: unknown, requestLogger: any) {
   const params = SearchPersonalDataSchema.parse(args);
 
   let query = supabaseAdmin
@@ -325,7 +423,7 @@ async function handleSearchPersonalData(args: unknown) {
   };
 }
 
-async function handleAddPersonalDataField(args: unknown) {
+async function handleAddPersonalDataField(args: unknown, requestLogger: any) {
   const params = AddPersonalDataFieldSchema.parse(args);
 
   const { data, error } = await supabaseAdmin
