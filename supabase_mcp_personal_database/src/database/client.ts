@@ -19,11 +19,25 @@ const supabaseConfig = {
   auth: {
     persistSession: false, // Stateless for better scaling
     detectSessionInUrl: false
+  },
+  db: {
+    schema: 'public'
+  },
+  global: {
+    headers: {
+      'x-application-name': 'mcp-personal-data-server'
+    }
+  },
+  // Connection pooling configuration for better performance
+  realtime: {
+    params: {
+      eventsPerSecond: parseInt(process.env.REALTIME_EVENTS_PER_SECOND || '10')
+    }
   }
 };
 
 function createSupabaseClients() {
-  validateEnvironmentVariables();
+  validateEnvironmentVariablesIfNeeded();
   
   return {
     supabaseAnon: createClient<Database>(
@@ -40,12 +54,23 @@ function createSupabaseClients() {
 }
 
 let clients: ReturnType<typeof createSupabaseClients> | null = null;
+let lastValidation: number = 0;
+const VALIDATION_CACHE_TTL = 60000; // Cache validation for 1 minute
 
 function getClients() {
   if (!clients) {
     clients = createSupabaseClients();
   }
   return clients;
+}
+
+// Optimized validation with caching
+function validateEnvironmentVariablesIfNeeded() {
+  const now = Date.now();
+  if (now - lastValidation > VALIDATION_CACHE_TTL) {
+    validateEnvironmentVariables();
+    lastValidation = now;
+  }
 }
 
 export const supabaseAnon = new Proxy({} as ReturnType<typeof createSupabaseClients>['supabaseAnon'], {

@@ -41,6 +41,7 @@ class ErrorMonitoring {
   private alertRules: Map<string, AlertRule> = new Map();
   private metricsInterval: NodeJS.Timeout | null = null;
   private alertHistory: Map<string, Date> = new Map();
+  private readonly MAX_ALERT_HISTORY = parseInt(process.env.MAX_ALERT_HISTORY || '100');
 
   constructor() {
     this.initializeDefaultRules();
@@ -121,15 +122,25 @@ class ErrorMonitoring {
   }
 
   private startMetricsCollection(): void {
-    // Collect metrics every 30 seconds
+    const isEnabled = process.env.ENABLE_MONITORING !== 'false';
+    const interval = parseInt(process.env.METRICS_INTERVAL || '300000'); // Default 5 minutes
+    
+    if (!isEnabled) {
+      logger.info('Monitoring disabled via environment variable');
+      return;
+    }
+    
+    // Collect metrics at configurable interval (default 5 minutes)
     this.metricsInterval = setInterval(async () => {
       await this.collectAndEvaluateMetrics();
-    }, 30000);
+    }, interval);
 
     // Cleanup interval (every hour)
     setInterval(async () => {
       await this.cleanupOldData();
     }, 3600000);
+    
+    logger.info(`Monitoring started with ${interval}ms interval`);
   }
 
   private async collectAndEvaluateMetrics(): Promise<void> {
@@ -405,6 +416,18 @@ class ErrorMonitoring {
 
   private async cleanupOldData(): Promise<void> {
     try {
+      // Clean up in-memory alert history if it exceeds limit
+      if (this.alertHistory.size > this.MAX_ALERT_HISTORY) {
+        const entries = Array.from(this.alertHistory.entries());
+        entries.sort((a, b) => a[1].getTime() - b[1].getTime());
+        
+        // Remove oldest entries
+        const toRemove = entries.slice(0, Math.floor(entries.length / 2));
+        toRemove.forEach(([key]) => {
+          this.alertHistory.delete(key);
+        });
+      }
+
       // Clean up old metrics (keep last 7 days)
       const sevenDaysAgo = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000);
       await supabaseAdmin

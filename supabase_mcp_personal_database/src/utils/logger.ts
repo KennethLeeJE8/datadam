@@ -65,9 +65,22 @@ export interface ErrorMetrics {
 class Logger {
   private correlationId: string;
   private sessionMetrics: Map<string, ErrorMetrics> = new Map();
+  private logBuffer: LogEntry[] = [];
+  private lastFlush: number = Date.now();
+  private readonly FLUSH_INTERVAL = parseInt(process.env.LOG_FLUSH_INTERVAL || '30000'); // 30 seconds
+  private readonly BATCH_SIZE = parseInt(process.env.LOG_BATCH_SIZE || '10');
+  private readonly PERSIST_TO_DB = process.env.PERSIST_LOGS_TO_DB !== 'false';
+  private readonly MAX_METRICS_SIZE = parseInt(process.env.MAX_METRICS_SIZE || '100');
 
   constructor() {
     this.correlationId = this.generateCorrelationId();
+    
+    // Set up periodic flushing for batched logs
+    if (this.PERSIST_TO_DB) {
+      setInterval(() => {
+        this.flushLogs();
+      }, this.FLUSH_INTERVAL);
+    }
   }
 
   private generateCorrelationId(): string {
@@ -94,33 +107,60 @@ class Logger {
     };
   }
 
-  private async persistLog(entry: LogEntry): Promise<void> {
+  private addToBuffer(entry: LogEntry): void {
+    if (!this.PERSIST_TO_DB) return;
+    
+    this.logBuffer.push(entry);
+    
+    // Flush if buffer is full or interval has passed
+    const now = Date.now();
+    if (this.logBuffer.length >= this.BATCH_SIZE || 
+        (now - this.lastFlush) >= this.FLUSH_INTERVAL) {
+      this.flushLogs();
+    }
+  }
+
+  private async flushLogs(): Promise<void> {
+    if (this.logBuffer.length === 0) return;
+    
+    const logsToFlush = this.logBuffer.splice(0);
+    this.lastFlush = Date.now();
+    
     try {
+      const logEntries = logsToFlush.map(entry => ({
+        level: LogLevel[entry.level].toLowerCase(),
+        message: entry.message,
+        category: entry.category,
+        context: entry.context,
+        error_details: entry.error ? {
+          name: entry.error.name,
+          message: entry.error.message,
+          stack: entry.error.stack,
+        } : null,
+        timestamp: entry.timestamp,
+        hostname: entry.hostname,
+        process_id: entry.processId,
+        correlation_id: entry.correlationId,
+      }));
+
       await supabaseAdmin
         .from('error_logs')
-        .insert({
-          level: LogLevel[entry.level].toLowerCase(),
-          message: entry.message,
-          category: entry.category,
-          context: entry.context,
-          error_details: entry.error ? {
-            name: entry.error.name,
-            message: entry.error.message,
-            stack: entry.error.stack,
-          } : null,
-          timestamp: entry.timestamp,
-          hostname: entry.hostname,
-          process_id: entry.processId,
-          correlation_id: entry.correlationId,
-        });
+        .insert(logEntries);
     } catch (persistError) {
-      console.error('Failed to persist log entry:', persistError);
+      console.error('Failed to persist log batch:', persistError);
+      // Optionally re-add failed logs to buffer for retry
     }
   }
 
   private updateMetrics(entry: LogEntry): void {
     if (entry.level >= LogLevel.ERROR && entry.context?.sessionId) {
       const sessionId = entry.context.sessionId;
+      
+      // Clean up old metrics if we're at the limit
+      if (this.sessionMetrics.size >= this.MAX_METRICS_SIZE) {
+        this.cleanupOldMetrics();
+      }
+      
       const metrics = this.sessionMetrics.get(sessionId) || {
         errorCount: 0,
         errorRate: 0,
@@ -146,6 +186,18 @@ class Logger {
       metrics.topErrors.sort((a, b) => b.count - a.count).slice(0, 10);
       this.sessionMetrics.set(sessionId, metrics);
     }
+  }
+
+  private cleanupOldMetrics(): void {
+    // Remove oldest metric entries if we've exceeded the limit
+    const entries = Array.from(this.sessionMetrics.entries());
+    entries.sort((a, b) => new Date(a[1].lastErrorTime).getTime() - new Date(b[1].lastErrorTime).getTime());
+    
+    // Remove oldest half
+    const toRemove = entries.slice(0, Math.floor(entries.length / 2));
+    toRemove.forEach(([sessionId]) => {
+      this.sessionMetrics.delete(sessionId);
+    });
   }
 
   private shouldLog(level: LogLevel): boolean {
@@ -210,7 +262,7 @@ class Logger {
     const entry = this.createLogEntry(LogLevel.WARN, message, category, context);
     this.outputToConsole(entry);
     this.updateMetrics(entry);
-    this.persistLog(entry);
+    this.addToBuffer(entry);
   }
 
   error(
@@ -224,7 +276,7 @@ class Logger {
     const entry = this.createLogEntry(LogLevel.ERROR, message, category, context, error);
     this.outputToConsole(entry);
     this.updateMetrics(entry);
-    this.persistLog(entry);
+    this.addToBuffer(entry);
   }
 
   critical(
@@ -236,10 +288,11 @@ class Logger {
     const entry = this.createLogEntry(LogLevel.CRITICAL, message, category, context, error);
     this.outputToConsole(entry);
     this.updateMetrics(entry);
-    this.persistLog(entry);
+    this.addToBuffer(entry);
     
-    // Critical errors should trigger immediate alerts
+    // Critical errors should trigger immediate alerts and flush logs
     this.triggerAlert(entry);
+    this.flushLogs(); // Immediate flush for critical errors
   }
 
   private async triggerAlert(entry: LogEntry): Promise<void> {
