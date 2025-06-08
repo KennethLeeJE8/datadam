@@ -21,7 +21,7 @@ const supabaseConfig = {
     detectSessionInUrl: false
   },
   db: {
-    schema: 'public'
+    schema: 'public' as const
   },
   global: {
     headers: {

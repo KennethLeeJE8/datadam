@@ -48,6 +48,7 @@ export interface Database {
           tags: string[] | null
           classification: string
           is_encrypted: boolean
+          deleted_at: string | null
           created_at: string
           updated_at: string
           last_accessed: string
@@ -61,6 +62,7 @@ export interface Database {
           tags?: string[] | null
           classification?: string
           is_encrypted?: boolean
+          deleted_at?: string | null
           created_at?: string
           updated_at?: string
           last_accessed?: string
@@ -74,6 +76,7 @@ export interface Database {
           tags?: string[] | null
           classification?: string
           is_encrypted?: boolean
+          deleted_at?: string | null
           created_at?: string
           updated_at?: string
           last_accessed?: string
@@ -143,12 +146,261 @@ export interface Database {
           created_at?: string
         }
       }
+      error_logs: {
+        Row: {
+          id: string
+          level: string
+          message: string
+          category: string | null
+          context: Json | null
+          error_details: Json | null
+          timestamp: string
+          hostname: string | null
+          process_id: number | null
+          correlation_id: string | null
+          created_at: string
+        }
+        Insert: {
+          id?: string
+          level: string
+          message: string
+          category?: string | null
+          context?: Json | null
+          error_details?: Json | null
+          timestamp?: string
+          hostname?: string | null
+          process_id?: number | null
+          correlation_id?: string | null
+          created_at?: string
+        }
+        Update: {
+          id?: string
+          level?: string
+          message?: string
+          category?: string | null
+          context?: Json | null
+          error_details?: Json | null
+          timestamp?: string
+          hostname?: string | null
+          process_id?: number | null
+          correlation_id?: string | null
+          created_at?: string
+        }
+      }
+      error_alerts: {
+        Row: {
+          id: string
+          level: string
+          message: string
+          context: Json | null
+          timestamp: string
+          correlation_id: string | null
+          status: string
+          acknowledged_at: string | null
+          acknowledged_by: string | null
+          created_at: string
+        }
+        Insert: {
+          id?: string
+          level: string
+          message: string
+          context?: Json | null
+          timestamp: string
+          correlation_id?: string | null
+          status?: string
+          acknowledged_at?: string | null
+          acknowledged_by?: string | null
+          created_at?: string
+        }
+        Update: {
+          id?: string
+          level?: string
+          message?: string
+          context?: Json | null
+          timestamp?: string
+          correlation_id?: string | null
+          status?: string
+          acknowledged_at?: string | null
+          acknowledged_by?: string | null
+          created_at?: string
+        }
+      }
+      error_metrics: {
+        Row: {
+          id: string
+          metric_type: string
+          metric_name: string
+          metric_value: number
+          labels: Json | null
+          timestamp: string
+          created_at: string
+        }
+        Insert: {
+          id?: string
+          metric_type: string
+          metric_name: string
+          metric_value: number
+          labels?: Json | null
+          timestamp: string
+          created_at?: string
+        }
+        Update: {
+          id?: string
+          metric_type?: string
+          metric_name?: string
+          metric_value?: number
+          labels?: Json | null
+          timestamp?: string
+          created_at?: string
+        }
+      }
+      error_recovery_attempts: {
+        Row: {
+          id: string
+          error_correlation_id: string
+          recovery_strategy: string
+          attempt_number: number
+          status: string
+          duration_ms: number | null
+          error_details: Json | null
+          recovery_context: Json | null
+          started_at: string
+          completed_at: string | null
+          created_at: string
+        }
+        Insert: {
+          id?: string
+          error_correlation_id: string
+          recovery_strategy: string
+          attempt_number: number
+          status: string
+          duration_ms?: number | null
+          error_details?: Json | null
+          recovery_context?: Json | null
+          started_at: string
+          completed_at?: string | null
+          created_at?: string
+        }
+        Update: {
+          id?: string
+          error_correlation_id?: string
+          recovery_strategy?: string
+          attempt_number?: number
+          status?: string
+          duration_ms?: number | null
+          error_details?: Json | null
+          recovery_context?: Json | null
+          started_at?: string
+          completed_at?: string | null
+          created_at?: string
+        }
+      }
     }
     Views: {
       [_ in never]: never
     }
     Functions: {
-      [_ in never]: never
+      search_personal_data: {
+        Args: {
+          user_id: string
+          search_text: string
+          data_types?: string[]
+          tags?: string[]
+          classification?: string
+          limit?: number
+          offset?: number
+        }
+        Returns: {
+          id: string
+          user_id: string
+          data_type: string
+          title: string
+          content: Json
+          tags: string[]
+          classification: string
+          created_at: string
+        }[]
+      }
+      bulk_update_personal_data_tags: {
+        Args: {
+          user_id: string
+          record_ids: string[]
+          tags_to_add: string[]
+          tags_to_remove: string[]
+        }
+        Returns: {
+          updated_count: number
+        }
+      }
+      soft_delete_personal_data: {
+        Args: {
+          user_id: string
+          record_id: string
+          deletion_reason: string
+        }
+        Returns: {
+          success: boolean
+          soft_deleted_id: string
+          deletion_timestamp: string
+        }
+      }
+      hard_delete_user_data: {
+        Args: {
+          user_id: string
+          confirmation_token: string
+        }
+        Returns: {
+          success: boolean
+          deleted_records: number
+          deletion_timestamp: string
+          gdpr_compliant: boolean
+        }
+      }
+      export_user_data: {
+        Args: {
+          user_id: string
+        }
+        Returns: {
+          personal_data: Json[]
+          profiles: Json[]
+          data_access_log: Json[]
+          export_timestamp: string
+          total_records: number
+        }
+      }
+      get_data_type_stats: {
+        Args: Record<string, never>
+        Returns: {
+          total_records: number
+          data_types: Json
+          classifications: Json
+        }
+      }
+      get_error_stats: {
+        Args: {
+          time_window: string
+        }
+        Returns: {
+          total_errors: number
+          error_rate: number
+          errors_by_level: Json
+          errors_by_category: Json
+        }
+      }
+      auto_resolve_alerts: {
+        Args: Record<string, never>
+        Returns: {
+          resolved_count: number
+        }
+      }
+      cleanup_old_error_logs: {
+        Args: {
+          retention_days: number
+        }
+        Returns: {
+          deleted_count: number
+        }
+      }
     }
     Enums: {
       [_ in never]: never
