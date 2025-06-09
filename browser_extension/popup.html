@@ -1,0 +1,76 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>MCP Personal Data Autofill</title>
+  <link rel="stylesheet" href="popup.css">
+</head>
+<body>
+  <div class="popup-container">
+    <!-- Header -->
+    <header class="header">
+      <div class="logo">
+        <img src="icons/icon48.png" alt="MCP Autofill" class="logo-icon">
+        <h1>MCP Autofill</h1>
+      </div>
+      <div class="connection-status" id="connectionStatus">
+        <span class="status-indicator" id="statusIndicator"></span>
+        <span class="status-text" id="statusText">Connecting...</span>
+      </div>
+    </header>
+
+    <!-- Current Page Info -->
+    <section class="page-info">
+      <div class="page-url" id="pageUrl">Loading...</div>
+      <div class="fields-count" id="fieldsCount">Scanning for fields...</div>
+    </section>
+
+    <!-- Quick Actions -->
+    <section class="quick-actions">
+      <button class="action-btn primary" id="fillAllBtn" disabled>
+        <span class="btn-icon">📝</span>
+        Fill All Fields
+      </button>
+      <button class="action-btn secondary" id="detectFieldsBtn">
+        <span class="btn-icon">🔍</span>
+        Re-scan Fields
+      </button>
+      <button class="action-btn secondary" id="saveFormBtn" disabled>
+        <span class="btn-icon">💾</span>
+        Save Form Data
+      </button>
+    </section>
+
+    <!-- Detected Fields -->
+    <section class="detected-fields">
+      <h3>Detected Fields</h3>
+      <div class="fields-list" id="fieldsList">
+        <div class="loading">Scanning page...</div>
+      </div>
+    </section>
+
+    <!-- Recent Data -->
+    <section class="recent-data">
+      <h3>Recently Used Data</h3>
+      <div class="data-list" id="recentDataList">
+        <div class="no-data">No recent data</div>
+      </div>
+    </section>
+
+    <!-- Search -->
+    <section class="search-section">
+      <input type="search" id="searchInput" placeholder="Search personal data..." class="search-input">
+      <div class="search-results" id="searchResults"></div>
+    </section>
+
+    <!-- Footer -->
+    <footer class="footer">
+      <button class="footer-btn" id="optionsBtn">⚙️ Settings</button>
+      <button class="footer-btn" id="helpBtn">❓ Help</button>
+    </footer>
+  </div>
+
+  <script src="popup.js"></script>
+</body>
+</html>
