@@ -1,0 +1,12 @@
+{
+  "mcpServers": {
+    "personal-data-server": {
+      "command": "node",
+      "args": ["dist/server/index.js"],
+      "cwd": "/Users/kenne/github/datadam/supabase_mcp_personal_database",
+      "env": {
+        "NODE_ENV": "production"
+      }
+    }
+  }
+}

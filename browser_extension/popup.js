@@ -33,6 +33,10 @@ class PopupController {
       this.saveFormData();
     });
 
+    document.getElementById('getProfilesBtn').addEventListener('click', () => {
+      this.getProfiles();
+    });
+
     document.getElementById('optionsBtn').addEventListener('click', () => {
       chrome.runtime.openOptionsPage();
     });
@@ -356,6 +360,120 @@ class PopupController {
     } catch (error) {
       console.error('Failed to fill field:', error);
       this.showNotification('Failed to fill field', 'error');
+    }
+  }
+
+  async getProfiles() {
+    try {
+      const getProfilesBtn = document.getElementById('getProfilesBtn');
+      getProfilesBtn.disabled = true;
+      getProfilesBtn.innerHTML = '<span class="btn-icon">⏳</span>Loading...';
+
+      const response = await chrome.runtime.sendMessage({
+        action: 'getProfiles'
+      });
+
+      if (response.success) {
+        if (response.profiles && response.profiles.length > 0) {
+          this.displayProfiles(response.profiles);
+          this.showNotification(`Loaded ${response.profiles.length} profiles`, 'success');
+        } else {
+          this.showNotification('No profiles found in database', 'info');
+        }
+      } else {
+        // Handle server connection errors
+        const error = response.error || 'Unknown error';
+        console.error('Server error:', error);
+        
+        if (error.includes('MCP Server') || error.includes('connection failed')) {
+          this.showServerError(error);
+        } else {
+          this.showNotification('Failed to load profiles: ' + error, 'error');
+        }
+      }
+    } catch (error) {
+      console.error('Failed to get profiles:', error);
+      this.showNotification('Extension error: ' + error.message, 'error');
+    } finally {
+      const getProfilesBtn = document.getElementById('getProfilesBtn');
+      getProfilesBtn.disabled = false;
+      getProfilesBtn.innerHTML = '<span class="btn-icon">👤</span>Get Profiles';
+    }
+  }
+
+  showServerError(errorMessage) {
+    const dataList = document.getElementById('recentDataList');
+    
+    // Create detailed error display
+    const errorHTML = `
+      <div class="server-error">
+        <div class="error-icon">🚫</div>
+        <div class="error-title">MCP Server Not Available</div>
+        <div class="error-message">${this.formatErrorMessage(errorMessage)}</div>
+        <div class="error-suggestions">
+          <strong>Troubleshooting:</strong>
+          <ul>
+            <li>Check that your MCP server is built: <code>npm run build</code></li>
+            <li>Verify server path in extension settings</li>
+            <li>Check server logs for database connection issues</li>
+          </ul>
+        </div>
+      </div>
+    `;
+    
+    dataList.innerHTML = errorHTML;
+    this.showNotification('MCP Server connection failed', 'error');
+  }
+
+  formatErrorMessage(error) {
+    // Make error messages more user-friendly
+    if (error.includes('not found')) {
+      return 'Server files not found at the configured path';
+    } else if (error.includes('timeout')) {
+      return 'Server took too long to start (may be missing dependencies)';
+    } else if (error.includes('Database connection failed')) {
+      return 'Server started but cannot connect to database';
+    } else if (error.includes('ENOENT')) {
+      return 'Node.js or server files not found';
+    } else {
+      return error;
+    }
+  }
+
+  displayProfiles(profiles) {
+    const dataList = document.getElementById('recentDataList');
+    
+    const profilesHTML = profiles
+      .slice(0, 5)
+      .map(profile => `
+        <div class="data-item profile-item" data-profile='${JSON.stringify(profile)}'>
+          <div class="data-type">👤 ${profile.name}</div>
+          <div class="data-value">${profile.email}</div>
+        </div>
+      `)
+      .join('');
+
+    dataList.innerHTML = profilesHTML;
+
+    dataList.querySelectorAll('.profile-item').forEach(item => {
+      item.addEventListener('click', () => {
+        const profile = JSON.parse(item.dataset.profile);
+        this.useProfileData(profile);
+      });
+    });
+  }
+
+  async useProfileData(profile) {
+    try {
+      await chrome.tabs.sendMessage(this.currentTab.id, {
+        action: 'fillWithData',
+        data: profile
+      });
+
+      this.showNotification(`Applied ${profile.name}'s data`, 'success');
+    } catch (error) {
+      console.error('Failed to use profile data:', error);
+      this.showNotification('Failed to apply profile data', 'error');
     }
   }
 
