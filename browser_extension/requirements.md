@@ -53,10 +53,10 @@ This document defines requirements for a browser agent that automatically detect
 ### 1.2 MCP Integration Architecture
 
 **Communication Layer**
-- **Protocol**: Native Messaging API for browser-to-MCP communication
-- **Transport**: stdio-based communication with local MCP server
-- **Message Format**: JSON-RPC 2.0 compliant with MCP extensions
-- **Session Management**: Persistent connection with automatic reconnection
+- **Protocol**: HTTP API for browser-to-MCP communication (required for browser extension compatibility)
+- **Transport**: HTTP requests to local MCP server API endpoint (port 3001)
+- **Message Format**: JSON-RPC 2.0 compliant with MCP extensions via HTTP POST
+- **Session Management**: Stateless HTTP requests with authentication tokens
 
 **MCP Client Implementation**
 ```typescript

@@ -1,0 +1,95 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Test Popup Flow</title>
+    <style>
+        body { font-family: Arial, sans-serif; padding: 20px; }
+        .data-item { border: 1px solid #ccc; padding: 10px; margin: 5px 0; }
+        .data-type { font-weight: bold; }
+        .data-value { color: #666; }
+        button { padding: 10px; margin: 10px 0; }
+    </style>
+</head>
+<body>
+    <h1>Test Browser Extension Profile Display</h1>
+    <button id="testBtn">Test Profile Display</button>
+    <div id="recentDataList"></div>
+
+    <script>
+        // Mock the profiles data that would come from the API
+        const testProfiles = [
+            {
+                "id": "8d9953cd-f97d-4770-bbc7-47a08977cf32",
+                "user_id": "399aa002-cb10-40fc-abfe-d2656eea0199",
+                "data_type": "contact",
+                "title": "Test Contact",
+                "content": {
+                    "name": "Test User",
+                    "email": "test@example.com"
+                },
+                "tags": ["test"]
+            },
+            {
+                "id": "837188a6-d48f-423c-aff5-95946db22a3f",
+                "user_id": "399aa002-cb10-40fc-abfe-d2656eea0199",
+                "data_type": "contact",
+                "title": "Updated Title - Test",
+                "content": {
+                    "type": "primary",
+                    "email": "kennethleeje8@gmail.com"
+                },
+                "tags": ["updated", "test"]
+            },
+            {
+                "id": "342dc359-e8e9-44f7-a062-6c5514ba2568",
+                "user_id": "399aa002-cb10-40fc-abfe-d2656eea0199",
+                "data_type": "preference",
+                "title": "Preferred Chatbots",
+                "content": {
+                    "type": "software_preference",
+                    "category": "ai_tools",
+                    "preferred_chatbots": ["Claude", "Perplexity"]
+                },
+                "tags": ["chatbots", "ai", "preferences", "tools"]
+            }
+        ];
+
+        // Copy of the updated displayProfiles function
+        function displayProfiles(profiles) {
+            const dataList = document.getElementById('recentDataList');
+            
+            const profilesHTML = profiles
+                .slice(0, 5)
+                .map(profile => {
+                    // Extract display values from the profile structure
+                    const displayName = profile.content?.name || profile.title || 'Unknown';
+                    const displayEmail = profile.content?.email || profile.content?.phone || 'No contact info';
+                    const profileType = profile.data_type || 'contact';
+                    
+                    return `
+                        <div class="data-item profile-item" data-profile='${JSON.stringify(profile)}'>
+                            <div class="data-type">👤 ${displayName} (${profileType})</div>
+                            <div class="data-value">${displayEmail}</div>
+                        </div>
+                    `;
+                })
+                .join('');
+
+            dataList.innerHTML = profilesHTML;
+
+            dataList.querySelectorAll('.profile-item').forEach(item => {
+                item.addEventListener('click', () => {
+                    const profile = JSON.parse(item.dataset.profile);
+                    console.log('Profile clicked:', profile);
+                    alert(`Clicked profile: ${profile.title}`);
+                });
+            });
+        }
+
+        document.getElementById('testBtn').addEventListener('click', () => {
+            console.log('Testing with profiles:', testProfiles);
+            displayProfiles(testProfiles);
+        });
+    </script>
+</body>
+</html>

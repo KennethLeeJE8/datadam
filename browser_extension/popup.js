@@ -445,12 +445,30 @@ class PopupController {
     
     const profilesHTML = profiles
       .slice(0, 5)
-      .map(profile => `
-        <div class="data-item profile-item" data-profile='${JSON.stringify(profile)}'>
-          <div class="data-type">👤 ${profile.name}</div>
-          <div class="data-value">${profile.email}</div>
-        </div>
-      `)
+      .map(profile => {
+        // Handle the new aggregated profile structure
+        const displayName = profile.name || 'Unnamed User';
+        const displayEmail = profile.email || profile.phone || 'No contact info';
+        
+        // Show additional info if available
+        const additionalInfo = [];
+        if (profile.phone && profile.email) additionalInfo.push(profile.phone);
+        if (Object.keys(profile.preferences || {}).length > 0) {
+          additionalInfo.push(`${Object.keys(profile.preferences).length} preferences`);
+        }
+        if (Object.keys(profile.documents || {}).length > 0) {
+          additionalInfo.push(`${Object.keys(profile.documents).length} documents`);
+        }
+        
+        const extraInfo = additionalInfo.length > 0 ? ` • ${additionalInfo.join(' • ')}` : '';
+        
+        return `
+          <div class="data-item profile-item" data-profile='${JSON.stringify(profile)}'>
+            <div class="data-type">👤 ${displayName}</div>
+            <div class="data-value">${displayEmail}${extraInfo}</div>
+          </div>
+        `;
+      })
       .join('');
 
     dataList.innerHTML = profilesHTML;

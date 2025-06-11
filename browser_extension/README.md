@@ -236,6 +236,311 @@ Latest test results from `test-extension-simple.js`:
 3. Reload extension in `chrome://extensions/`
 4. Test with `test.html`
 
+## 📡 HTTP API Reference
+
+The browser extension communicates with the MCP server through HTTP requests to port 3001. Below is a comprehensive list of all HTTP API endpoints used:
+
+### Health & Status Endpoints
+
+#### GET /health
+**Purpose**: Check if the MCP HTTP API Server is running  
+**URL**: `http://localhost:3001/health`  
+**Method**: GET  
+**Headers**: None required  
+**Response**:
+```json
+{
+  "status": "ok",
+  "service": "MCP Personal Data HTTP API", 
+  "timestamp": "2024-01-01T00:00:00.000Z"
+}
+```
+
+#### GET /status  
+**Purpose**: Get detailed server status and uptime  
+**URL**: `http://localhost:3001/status`  
+**Method**: GET  
+**Headers**: None required  
+**Response**:
+```json
+{
+  "status": "running",
+  "service": "MCP HTTP API Server",
+  "port": 3001,
+  "uptime": 123.45,
+  "timestamp": "2024-01-01T00:00:00.000Z"
+}
+```
+
+#### GET /api/tools
+**Purpose**: List all available MCP tools and their schemas  
+**URL**: `http://localhost:3001/api/tools`  
+**Method**: GET  
+**Headers**: Content-Type: application/json  
+**Response**:
+```json
+{
+  "success": true,
+  "tools": [
+    {
+      "name": "extract_personal_data",
+      "description": "Extract personal data with optional filtering",
+      "inputSchema": { ... }
+    }
+  ],
+  "timestamp": "2024-01-01T00:00:00.000Z"
+}
+```
+
+### Personal Data Management Endpoints
+
+#### POST /api/extract_personal_data
+**Purpose**: Retrieve personal data for form autofill  
+**URL**: `http://localhost:3001/api/extract_personal_data`  
+**Method**: POST  
+**Headers**: Content-Type: application/json  
+**Request Body**:
+```json
+{
+  "user_id": "399aa002-cb10-40fc-abfe-d2656eea0199",
+  "data_types": ["contact", "document", "preference", "custom"],
+  "filters": { "classification": ["personal", "public"] },
+  "limit": 50,
+  "offset": 0
+}
+```
+**Response**:
+```json
+{
+  "success": true,
+  "data": [
+    {
+      "id": "1",
+      "user_id": "399aa002-cb10-40fc-abfe-d2656eea0199",
+      "data_type": "contact",
+      "title": "Emergency Contact",
+      "content": { "name": "John Doe", "phone": "+1-555-123-4567" },
+      "tags": ["emergency", "contact"],
+      "classification": "personal",
+      "created_at": "2024-01-01T00:00:00.000Z"
+    }
+  ],
+  "timestamp": "2024-01-01T00:00:00.000Z"
+}
+```
+
+#### POST /api/create_personal_data  
+**Purpose**: Save new personal data from form fields  
+**URL**: `http://localhost:3001/api/create_personal_data`  
+**Method**: POST  
+**Headers**: Content-Type: application/json  
+**Request Body**:
+```json
+{
+  "user_id": "399aa002-cb10-40fc-abfe-d2656eea0199",
+  "data_type": "contact",
+  "title": "Work Contact",
+  "content": { "email": "work@example.com", "phone": "+1-555-999-8888" },
+  "tags": ["work", "contact"],
+  "classification": "personal"
+}
+```
+**Response**:
+```json
+{
+  "success": true,
+  "data": {
+    "id": "new_record_id",
+    "user_id": "399aa002-cb10-40fc-abfe-d2656eea0199",
+    "data_type": "contact",
+    "title": "Work Contact",
+    "content": { "email": "work@example.com", "phone": "+1-555-999-8888" },
+    "tags": ["work", "contact"],
+    "classification": "personal",
+    "created_at": "2024-01-01T00:00:00.000Z"
+  },
+  "timestamp": "2024-01-01T00:00:00.000Z"
+}
+```
+
+#### PUT /api/update_personal_data/:recordId
+**Purpose**: Update existing personal data record  
+**URL**: `http://localhost:3001/api/update_personal_data/{record_id}`  
+**Method**: PUT  
+**Headers**: Content-Type: application/json  
+**Request Body**:
+```json
+{
+  "title": "Updated Contact Info",
+  "content": { "email": "updated@example.com" },
+  "tags": ["updated", "contact"]
+}
+```
+**Response**:
+```json
+{
+  "success": true,
+  "data": {
+    "id": "record_id",
+    "message": "Record updated successfully"
+  },
+  "timestamp": "2024-01-01T00:00:00.000Z"
+}
+```
+
+#### DELETE /api/delete_personal_data
+**Purpose**: Delete one or more personal data records  
+**URL**: `http://localhost:3001/api/delete_personal_data`  
+**Method**: DELETE  
+**Headers**: Content-Type: application/json  
+**Request Body**:
+```json
+{
+  "record_ids": ["record_id_1", "record_id_2"],
+  "hard_delete": false
+}
+```
+**Response**:
+```json
+{
+  "success": true,
+  "data": {
+    "deleted_count": 2,
+    "hard_delete": false,
+    "message": "Records deleted successfully"
+  },
+  "timestamp": "2024-01-01T00:00:00.000Z"
+}
+```
+
+#### POST /api/search_personal_data
+**Purpose**: Search personal data with query string  
+**URL**: `http://localhost:3001/api/search_personal_data`  
+**Method**: POST  
+**Headers**: Content-Type: application/json  
+**Request Body**:
+```json
+{
+  "user_id": "399aa002-cb10-40fc-abfe-d2656eea0199",
+  "query": "john doe",
+  "data_types": ["contact"],
+  "limit": 20
+}
+```
+**Response**:
+```json
+{
+  "success": true,
+  "data": {
+    "query": "john doe",
+    "results": [
+      {
+        "id": "1",
+        "title": "John Doe Contact",
+        "content": { "name": "John Doe", "email": "john@example.com" },
+        "data_type": "contact",
+        "relevance_score": 0.95
+      }
+    ],
+    "count": 1
+  },
+  "timestamp": "2024-01-01T00:00:00.000Z"
+}
+```
+
+#### POST /api/add_personal_data_field
+**Purpose**: Add new field definition for personal data schema  
+**URL**: `http://localhost:3001/api/add_personal_data_field`  
+**Method**: POST  
+**Headers**: Content-Type: application/json  
+**Request Body**:
+```json
+{
+  "field_name": "emergency_contact",
+  "data_type": "string",
+  "validation_rules": { "required": true },
+  "is_required": false,
+  "default_value": null
+}
+```
+**Response**:
+```json
+{
+  "success": true,
+  "data": {
+    "field_name": "emergency_contact",
+    "data_type": "string",
+    "message": "Field added successfully"
+  },
+  "timestamp": "2024-01-01T00:00:00.000Z"
+}
+```
+
+#### GET /api/user_profile/:userId
+**Purpose**: Get aggregated user profile data  
+**URL**: `http://localhost:3001/api/user_profile/399aa002-cb10-40fc-abfe-d2656eea0199`  
+**Method**: GET  
+**Headers**: Content-Type: application/json  
+**Response**:
+```json
+{
+  "success": true,
+  "profile": {
+    "user_id": "399aa002-cb10-40fc-abfe-d2656eea0199",
+    "name": "Kenneth Lee",
+    "email": "kenneth@example.com",
+    "phone": "+1-555-0123",
+    "address": null,
+    "preferences": { "theme": "dark" },
+    "documents": {},
+    "custom_fields": {}
+  }
+}
+```
+
+### Generic Tool Endpoint
+
+#### POST /api/tools/:toolName
+**Purpose**: Call any MCP tool dynamically  
+**URL**: `http://localhost:3001/api/tools/{tool_name}`  
+**Method**: POST  
+**Headers**: Content-Type: application/json  
+**Request Body**: Tool-specific arguments as JSON object  
+**Response**:
+```json
+{
+  "success": true,
+  "tool": "tool_name",
+  "result": { /* Tool-specific result data */ },
+  "timestamp": "2024-01-01T00:00:00.000Z"
+}
+```
+
+### Error Responses
+
+All endpoints may return error responses in this format:
+```json
+{
+  "success": false,
+  "error": "Error description",
+  "code": "ERROR_CODE",
+  "timestamp": "2024-01-01T00:00:00.000Z"
+}
+```
+
+### Browser Extension Usage
+
+The extension makes these requests from:
+- **background.js**: All API calls from `EnhancedMCPClient` class (lines 25-231)
+- **popup.js**: Indirect calls via `chrome.runtime.sendMessage()` to background script (lines 319-322, 372-374)
+
+### Connection Configuration
+
+- **Base URL**: `http://localhost:3001` (configurable in background.js:6)
+- **User ID**: `399aa002-cb10-40fc-abfe-d2656eea0199` (Kenneth Lee)
+- **Timeout**: 2 minutes per request (default)
+- **Retry Logic**: Falls back to mock data on connection failure
+
 ## 📝 License
 
 This project is part of the MCP Personal Data Management system.
