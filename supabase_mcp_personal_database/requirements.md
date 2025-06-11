@@ -24,8 +24,8 @@ This document defines comprehensive requirements for building a Model Context Pr
 **Protocol Foundation**
 - **Base Protocol**: JSON-RPC 2.0 with MCP specification compliance
 - **Transport Mechanisms**: 
-  - Primary: stdio transport for local integrations
-  - Secondary: Streamable HTTP transport for remote access
+  - Primary: HTTP API transport for browser extension compatibility (port 3001)
+  - Secondary: stdio transport for local integrations
   - Support for custom transports as needed
 - **Message Format**: Standard JSON-RPC with MCP-specific extensions
 - **Session Management**: OAuth 2.1 with PKCE for security baseline
