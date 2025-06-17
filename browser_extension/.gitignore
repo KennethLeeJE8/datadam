@@ -25,7 +25,6 @@ build/
 .vscode/
 *.swp
 *.swo
-.DS_Store
 Thumbs.db
 
 # Testing
@@ -48,10 +47,6 @@ web-ext-artifacts/
 .cache/
 
 # System Files
-.DS_Store
-.DS_Store?
-._*
-.Spotlight-V100
-.Trashes
-ehthumbs.db
-Thumbs.db 
+**/.DS_Store
+**/.DS_Store?
+**/.DS_Store?

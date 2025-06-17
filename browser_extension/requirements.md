@@ -94,37 +94,81 @@ interface NativeHost {
 }
 ```
 
-### 1.3 Form Field Detection Engine
+### 1.3 Advanced Form Field Detection Engine
 
-**Field Detection Algorithm**
+**Multi-Strategy Field Detection Algorithm**
 ```typescript
 interface FieldDetector {
-  // Detect all form fields on current page
+  // Core detection methods
   detectFormFields(): FormField[];
+  getAllInputElements(): HTMLElement[];
+  isElementFillable(element: HTMLElement): boolean;
   
-  // Analyze field characteristics
+  // Advanced field analysis
   analyzeField(element: HTMLElement): FieldAnalysis;
+  generateFieldIdentifier(element: HTMLElement): string;
+  determineFieldType(element: HTMLElement): number;
   
-  // Monitor for dynamic field changes
+  // Platform-specific detection
+  detectGoogleForms(): boolean;
+  detectMicrosoftForms(): boolean;
+  isCustomFormElement(element: HTMLElement): boolean;
+  getCustomFormLabel(element: HTMLElement): string | null;
+  
+  // Dynamic monitoring
   observeFieldChanges(callback: (fields: FormField[]) => void): void;
   
-  // Field type inference
+  // Field classification and mapping
   inferFieldType(field: FormField): PersonalDataType;
+  calculateAdvancedConfidence(fieldData: FormField): number;
 }
 
 interface FormField {
   element: HTMLElement;
-  type: string; // input type
+  identifier: string; // unique field identifier using multiple strategies
+  type: number; // field type classification (0=text, 1=password, 2=dropdown, 3=checkbox)
+  value: string; // current field value
   name: string;
   id: string;
   label: string;
   placeholder: string;
   autocomplete: string;
   ariaLabel: string;
-  contextualHints: string[]; // nearby text that helps identify field
-  confidence: number; // 0-1 confidence in field type detection
+  contextualHints: string[]; // enhanced context detection
+  xpath: string; // XPath selector for reliable targeting
+  attributes: Record<string, string>; // relevant HTML attributes
+  inferredType: string; // inferred data type for database lookup
+  confidence: number; // 0-100 confidence score
 }
 ```
+
+**Enhanced Field Detection Strategies**
+
+1. **Standard HTML Forms**: Traditional form elements with comprehensive attribute analysis
+2. **Google Forms**: Specialized detection for Google's dynamic form system
+3. **Microsoft Forms**: Tailored selectors for Microsoft 365 forms
+4. **Single Page Applications**: React, Vue, Angular component detection
+5. **Shadow DOM**: Web components with encapsulated form elements
+6. **Dynamic Content**: AJAX-loaded and JavaScript-generated forms
+
+**Google Forms Special Case Detection**
+- **Platform Recognition**: Detects Google Forms by checking for `jsaction` attribute on document body and URL pattern matching
+- **Enhanced Element Selection**: Uses specialized selectors for Google's custom form elements including `div[role="radio"]`, `div[role="checkbox"]`, `input[data-params]`, and elements with jsaction attributes
+- **Advanced Label Detection**: Implements 5-strategy approach including question container analysis, ARIA label references, data-params parsing, and nearby text element detection
+- **Dynamic Field Discovery**: Searches within Google Forms containers (`.freebirdFormviewerViewItemsItemItem`) for elements that may not match standard selectors
+- **Context-Aware Type Classification**: Analyzes container text content to determine field purpose (email, phone, address, etc.)
+
+**Microsoft Forms Special Case Detection**
+- **Platform Recognition**: Identifies Microsoft Forms through URL pattern matching for `forms.(microsoft|office).com`
+- **Targeted Selectors**: Uses Microsoft-specific selectors like `div[data-automation-id="questionItem"]` and related elements
+- **Label Extraction**: Finds question text through heading elements within question containers
+- **Role-Based Detection**: Identifies form elements through ARIA roles and automation IDs
+
+**Advanced Field Identification System**
+- **Multi-Strategy Identifier Generation**: Uses prioritized fallback system starting with ARIA labels, then direct label associations, platform-specific detection, standard attributes, and finally CSS/XPath selectors
+- **Confidence Scoring**: Calculates 0-100 confidence scores based on multiple factors including element type, label quality, ARIA attributes, and platform-specific indicators
+- **Database Field Mapping**: Maps detected fields to database field types using enhanced keyword matching with priority-based patterns for email, phone, name, address components
+- **Fuzzy Matching Support**: Provides flexible field identification across different website structures and frameworks
 
 **Field Type Mapping**
 ```typescript

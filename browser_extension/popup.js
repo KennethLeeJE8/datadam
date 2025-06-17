@@ -37,6 +37,14 @@ class PopupController {
       this.getProfiles();
     });
 
+    document.getElementById('matchFieldsBtn').addEventListener('click', () => {
+      this.matchFieldsToDatabase();
+    });
+
+    document.getElementById('extractDataBtn').addEventListener('click', () => {
+      this.extractFilledData();
+    });
+
     document.getElementById('optionsBtn').addEventListener('click', () => {
       chrome.runtime.openOptionsPage();
     });
@@ -108,23 +116,42 @@ class PopupController {
     const fieldsList = document.getElementById('fieldsList');
     
     if (this.detectedFields.length === 0) {
-      fieldsList.innerHTML = '<div class="no-data">No form fields detected</div>';
+      fieldsList.innerHTML = '<div class="no-data">No fillable fields detected</div>';
       return;
     }
 
     const fieldsHTML = this.detectedFields
       .filter(field => field.confidence > 30)
       .sort((a, b) => b.confidence - a.confidence)
-      .slice(0, 10)
+      .slice(0, 15)
       .map(field => `
-        <div class="field-item fade-in">
-          <span class="field-type">${this.formatFieldType(field.inferredType)}</span>
-          <span class="field-confidence">${field.confidence}%</span>
+        <div class="field-item detailed fade-in" data-field='${JSON.stringify(this.sanitizeFieldForDisplay(field))}'>
+          <div class="field-header">
+            <span class="field-type">${this.getFieldTypeDisplay(field)}</span>
+            <span class="field-confidence ${this.getConfidenceClass(field.confidence)}">${field.confidence}%</span>
+          </div>
+          <div class="field-details">
+            <div class="field-label">${this.getFieldDisplayName(field)}</div>
+            <div class="field-selectors">
+              ${field.name ? `<span class="selector-tag">name: ${field.name}</span>` : ''}
+              ${field.id ? `<span class="selector-tag">id: ${field.id}</span>` : ''}
+              ${field.placeholder ? `<span class="selector-tag">placeholder: ${field.placeholder}</span>` : ''}
+              ${field.identifier ? `<span class="selector-tag">identifier: ${field.identifier}</span>` : ''}
+            </div>
+          </div>
         </div>
       `)
       .join('');
 
     fieldsList.innerHTML = fieldsHTML;
+
+    // Add click handlers for detailed view
+    fieldsList.querySelectorAll('.field-item').forEach(item => {
+      item.addEventListener('click', () => {
+        const field = JSON.parse(item.dataset.field);
+        this.showFieldDetails(field);
+      });
+    });
   }
 
   formatFieldType(type) {
@@ -140,10 +167,164 @@ class PopupController {
       'creditcard': '💳 Credit Card',
       'expiry': '📅 Expiry',
       'birthday': '🎂 Birthday',
+      'website': '🌐 Website',
+      'company': '🏢 Company',
       'custom': '❓ Unknown'
     };
 
     return typeMap[type] || `❓ ${type}`;
+  }
+
+  getFieldTypeDisplay(field) {
+    // Handle the new field type system (numeric types from autofill logic)
+    if (field.type !== undefined && typeof field.type === 'number') {
+      const typeMap = {
+        0: '📝 Text Input',
+        1: '🔒 Password',
+        2: '📋 Dropdown',
+        3: '☑️ Checkbox/Radio'
+      };
+      return typeMap[field.type] || '❓ Unknown';
+    }
+    
+    // Handle inferred types
+    if (field.inferredType) {
+      return this.formatFieldType(field.inferredType);
+    }
+    
+    // Fallback to element type
+    if (field.element && field.element.type) {
+      return this.formatFieldType(field.element.type);
+    }
+    
+    return '📝 Field';
+  }
+
+  sanitizeFieldForDisplay(field) {
+    // Remove DOM element reference for JSON serialization and add safe display data
+    return {
+      identifier: field.identifier,
+      type: field.type,
+      name: field.name,
+      id: field.id,
+      label: field.label,
+      placeholder: field.placeholder,
+      autocomplete: field.autocomplete,
+      ariaLabel: field.ariaLabel,
+      contextualHints: field.contextualHints,
+      xpath: field.xpath,
+      inferredType: field.inferredType,
+      confidence: field.confidence,
+      attributes: field.attributes,
+      value: field.value
+    };
+  }
+
+  getFieldDisplayName(field) {
+    // Priority order for display name - use identifier first if available
+    if (field.identifier && field.identifier.trim()) {
+      return field.identifier;
+    }
+    if (field.label && field.label.trim()) {
+      return `"${field.label.trim()}"`;
+    }
+    if (field.placeholder && field.placeholder.trim()) {
+      return `"${field.placeholder.trim()}"`;
+    }
+    if (field.ariaLabel && field.ariaLabel.trim()) {
+      return `"${field.ariaLabel.trim()}"`;
+    }
+    if (field.name && field.name.trim()) {
+      return `[name="${field.name}"]`;
+    }
+    if (field.id && field.id.trim()) {
+      return `[id="${field.id}"]`;
+    }
+    return 'Unlabeled field';
+  }
+
+  getConfidenceClass(confidence) {
+    if (confidence >= 80) return 'confidence-high';
+    if (confidence >= 60) return 'confidence-medium';
+    return 'confidence-low';
+  }
+
+  showFieldDetails(field) {
+    // Create detailed popup overlay
+    const overlay = document.createElement('div');
+    overlay.className = 'field-details-overlay';
+    overlay.style.cssText = `
+      position: fixed;
+      top: 0;
+      left: 0;
+      right: 0;
+      bottom: 0;
+      background: rgba(0,0,0,0.7);
+      z-index: 10000;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      padding: 20px;
+    `;
+
+    const modal = document.createElement('div');
+    modal.className = 'field-details-modal';
+    modal.style.cssText = `
+      background: white;
+      border-radius: 8px;
+      padding: 20px;
+      max-width: 500px;
+      max-height: 80vh;
+      overflow-y: auto;
+      box-shadow: 0 4px 20px rgba(0,0,0,0.3);
+    `;
+
+    modal.innerHTML = `
+      <div class="modal-header">
+        <h3>${this.formatFieldType(field.inferredType)} Field Details</h3>
+        <button class="close-btn" style="float: right; background: none; border: none; font-size: 20px; cursor: pointer;">&times;</button>
+      </div>
+      <div class="modal-content">
+        <div class="detail-section">
+          <strong>Confidence:</strong> <span class="${this.getConfidenceClass(field.confidence)}">${field.confidence}%</span>
+        </div>
+        <div class="detail-section">
+          <strong>Field Type:</strong> ${field.type || 'text'}
+        </div>
+        <div class="detail-section">
+          <strong>Display Name:</strong> ${this.getFieldDisplayName(field)}
+        </div>
+        ${field.name ? `<div class="detail-section"><strong>Name:</strong> ${field.name}</div>` : ''}
+        ${field.id ? `<div class="detail-section"><strong>ID:</strong> ${field.id}</div>` : ''}
+        ${field.placeholder ? `<div class="detail-section"><strong>Placeholder:</strong> "${field.placeholder}"</div>` : ''}
+        ${field.autocomplete ? `<div class="detail-section"><strong>Autocomplete:</strong> ${field.autocomplete}</div>` : ''}
+        ${field.ariaLabel ? `<div class="detail-section"><strong>Aria Label:</strong> "${field.ariaLabel}"</div>` : ''}
+        ${field.contextualHints && field.contextualHints.length > 0 ? 
+          `<div class="detail-section"><strong>Context Hints:</strong> ${field.contextualHints.map(hint => `"${hint}"`).join(', ')}</div>` : ''}
+        ${field.xpath ? `<div class="detail-section"><strong>XPath:</strong> <code style="font-size: 11px; background: #f5f5f5; padding: 2px 4px; border-radius: 2px;">${field.xpath}</code></div>` : ''}
+      </div>
+    `;
+
+    overlay.appendChild(modal);
+    document.body.appendChild(overlay);
+
+    // Close handlers
+    const closeBtn = modal.querySelector('.close-btn');
+    const closeModal = () => overlay.remove();
+    
+    closeBtn.addEventListener('click', closeModal);
+    overlay.addEventListener('click', (e) => {
+      if (e.target === overlay) closeModal();
+    });
+    
+    // Close on escape key
+    const escapeHandler = (e) => {
+      if (e.key === 'Escape') {
+        closeModal();
+        document.removeEventListener('keydown', escapeHandler);
+      }
+    };
+    document.addEventListener('keydown', escapeHandler);
   }
 
   updateFieldsCount() {
@@ -493,6 +674,257 @@ class PopupController {
       console.error('Failed to use profile data:', error);
       this.showNotification('Failed to apply profile data', 'error');
     }
+  }
+
+  async matchFieldsToDatabase() {
+    try {
+      const matchBtn = document.getElementById('matchFieldsBtn');
+      matchBtn.disabled = true;
+      matchBtn.innerHTML = '<span class="btn-icon">🔍</span>Matching...';
+
+      const response = await chrome.tabs.sendMessage(this.currentTab.id, {
+        action: 'matchFieldsToDatabase'
+      });
+
+      if (response.success) {
+        this.displayDatabaseMatches(response.matches);
+        this.showNotification(`Found ${response.matches.matches.length} field matches`, 'success');
+      } else {
+        this.showNotification('Failed to match fields: ' + response.error, 'error');
+      }
+    } catch (error) {
+      console.error('Failed to match fields to database:', error);
+      this.showNotification('Failed to match fields', 'error');
+    } finally {
+      const matchBtn = document.getElementById('matchFieldsBtn');
+      matchBtn.disabled = false;
+      matchBtn.innerHTML = '<span class="btn-icon">🔗</span>Match to Database';
+    }
+  }
+
+  displayDatabaseMatches(matchResults) {
+    const dataList = document.getElementById('recentDataList');
+    
+    if (matchResults.matches.length === 0) {
+      dataList.innerHTML = '<div class="no-data">No database matches found</div>';
+      return;
+    }
+
+    const matchesHTML = matchResults.matches
+      .slice(0, 10) // Show top 10 matches
+      .map(match => {
+        const suggestions = match.databaseData.slice(0, 3); // Top 3 suggestions per field
+        const fieldName = this.getFieldDisplayName(match.field);
+        
+        return `
+          <div class="match-item" data-match='${JSON.stringify(this.sanitizeMatchForDisplay(match))}'>
+            <div class="match-header">
+              <span class="match-field">${fieldName}</span>
+              <span class="match-confidence confidence-${this.getConfidenceClass(match.confidence)}">${match.confidence}%</span>
+            </div>
+            <div class="match-suggestions">
+              ${suggestions.map(suggestion => `
+                <div class="suggestion-item" data-value="${suggestion.value}">
+                  <span class="suggestion-value">${suggestion.value}</span>
+                  <span class="suggestion-source">${match.source}</span>
+                </div>
+              `).join('')}
+            </div>
+          </div>
+        `;
+      })
+      .join('');
+
+    dataList.innerHTML = `
+      <div class="matches-section">
+        <h4>Database Matches (${matchResults.matches.length})</h4>
+        ${matchesHTML}
+      </div>
+      ${matchResults.missingData.length > 0 ? `
+        <div class="missing-data-section">
+          <h4>Missing Data (${matchResults.missingData.length})</h4>
+          ${matchResults.missingData.map(missing => `
+            <div class="missing-item">
+              <span class="missing-type">${missing.fieldType}</span>
+              <span class="missing-count">${missing.fields.length} field(s)</span>
+            </div>
+          `).join('')}
+        </div>
+      ` : ''}
+    `;
+
+    // Add click handlers for suggestions
+    dataList.querySelectorAll('.suggestion-item').forEach(item => {
+      item.addEventListener('click', () => {
+        const value = item.dataset.value;
+        const matchData = JSON.parse(item.closest('.match-item').dataset.match);
+        this.applySuggestionToField(matchData.field, value);
+      });
+    });
+  }
+
+  sanitizeMatchForDisplay(match) {
+    return {
+      field: {
+        identifier: match.field.identifier,
+        name: match.field.name,
+        id: match.field.id,
+        label: match.field.label,
+        inferredType: match.field.inferredType
+      },
+      fieldType: match.fieldType,
+      confidence: match.confidence,
+      source: match.source
+    };
+  }
+
+  async applySuggestionToField(field, value) {
+    try {
+      await chrome.tabs.sendMessage(this.currentTab.id, {
+        action: 'fillFieldWithValue',
+        fieldIdentifier: field.identifier,
+        value: value
+      });
+
+      this.showNotification(`Filled ${field.identifier} with "${value}"`, 'success');
+    } catch (error) {
+      console.error('Failed to fill field:', error);
+      this.showNotification('Failed to fill field', 'error');
+    }
+  }
+
+  async extractFilledData() {
+    try {
+      const extractBtn = document.getElementById('extractDataBtn');
+      extractBtn.disabled = true;
+      extractBtn.innerHTML = '<span class="btn-icon">📤</span>Extracting...';
+
+      // Get filled form data from the current page
+      const response = await chrome.tabs.sendMessage(this.currentTab.id, {
+        action: 'extractFilledFormData'
+      });
+
+      if (response.success && response.data && Object.keys(response.data).length > 0) {
+        // Show extracted data to user for confirmation
+        const confirmed = await this.showExtractedDataConfirmation(response.data);
+        
+        if (confirmed) {
+          // Save to database via background service
+          const saveResponse = await chrome.runtime.sendMessage({
+            action: 'saveExtractedData',
+            data: response.data,
+            metadata: {
+              url: this.currentTab.url,
+              title: this.currentTab.title,
+              timestamp: new Date().toISOString(),
+              fieldCount: Object.keys(response.data).length
+            }
+          });
+
+          if (saveResponse.success) {
+            this.showNotification(`Extracted and saved ${Object.keys(response.data).length} fields`, 'success');
+            await this.loadRecentData(); // Refresh recent data
+          } else {
+            this.showNotification('Failed to save extracted data: ' + saveResponse.error, 'error');
+          }
+        }
+      } else {
+        this.showNotification('No filled form data found on this page', 'info');
+      }
+    } catch (error) {
+      console.error('Failed to extract data:', error);
+      this.showNotification('Failed to extract data: ' + error.message, 'error');
+    } finally {
+      const extractBtn = document.getElementById('extractDataBtn');
+      extractBtn.disabled = false;
+      extractBtn.innerHTML = '<span class="btn-icon">📤</span>Extract Data';
+    }
+  }
+
+  async showExtractedDataConfirmation(extractedData) {
+    return new Promise((resolve) => {
+      // Create confirmation modal
+      const overlay = document.createElement('div');
+      overlay.className = 'extract-confirmation-overlay';
+      overlay.style.cssText = `
+        position: fixed;
+        top: 0;
+        left: 0;
+        right: 0;
+        bottom: 0;
+        background: rgba(0,0,0,0.7);
+        z-index: 10000;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        padding: 20px;
+      `;
+
+      const modal = document.createElement('div');
+      modal.className = 'extract-confirmation-modal';
+      modal.style.cssText = `
+        background: white;
+        border-radius: 8px;
+        padding: 20px;
+        max-width: 500px;
+        max-height: 80vh;
+        overflow-y: auto;
+        box-shadow: 0 4px 20px rgba(0,0,0,0.3);
+      `;
+
+      // Build data display
+      const dataItems = Object.entries(extractedData)
+        .map(([fieldType, value]) => `
+          <div class="extracted-item">
+            <span class="extracted-type">${this.formatFieldType(fieldType)}:</span>
+            <span class="extracted-value">"${value}"</span>
+          </div>
+        `)
+        .join('');
+
+      modal.innerHTML = `
+        <div class="modal-header">
+          <h3>📤 Confirm Data Extraction</h3>
+          <button class="close-btn" style="float: right; background: none; border: none; font-size: 20px; cursor: pointer;">&times;</button>
+        </div>
+        <div class="modal-content">
+          <p>Found ${Object.keys(extractedData).length} filled fields. Save this data to your personal database?</p>
+          <div class="extracted-data-preview">
+            ${dataItems}
+          </div>
+        </div>
+        <div class="modal-actions" style="margin-top: 20px; display: flex; gap: 10px; justify-content: flex-end;">
+          <button class="cancel-btn" style="padding: 8px 16px; border: 1px solid #ccc; background: white; border-radius: 4px; cursor: pointer;">Cancel</button>
+          <button class="confirm-btn" style="padding: 8px 16px; background: #4CAF50; color: white; border: none; border-radius: 4px; cursor: pointer;">Save Data</button>
+        </div>
+      `;
+
+      overlay.appendChild(modal);
+      document.body.appendChild(overlay);
+
+      // Event handlers
+      const closeModal = (result) => {
+        overlay.remove();
+        resolve(result);
+      };
+
+      modal.querySelector('.close-btn').addEventListener('click', () => closeModal(false));
+      modal.querySelector('.cancel-btn').addEventListener('click', () => closeModal(false));
+      modal.querySelector('.confirm-btn').addEventListener('click', () => closeModal(true));
+      
+      overlay.addEventListener('click', (e) => {
+        if (e.target === overlay) closeModal(false);
+      });
+
+      // Close on escape key
+      const escapeHandler = (e) => {
+        if (e.key === 'Escape') {
+          closeModal(false);
+          document.removeEventListener('keydown', escapeHandler);
+        }
+      };
+      document.addEventListener('keydown', escapeHandler);
+    });
   }
 
   showNotification(message, type = 'info') {
