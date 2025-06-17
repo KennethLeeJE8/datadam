@@ -874,4 +874,194 @@ module.exports = {
 - Contributing guidelines
 - Security best practices
 
+## 9. Enhanced Database Field Matching with Fuzzy Tag Matching
+
+### 9.1 Fuzzy Tag Matching Implementation
+
+**Core Features**
+- **Intelligent Tag Extraction**: Automatically extracts meaningful search tags from detected form fields including identifiers, labels, placeholders, and contextual hints
+- **Fuzzy Similarity Algorithm**: Implements comprehensive fuzzy matching using exact matches, containment detection, and character overlap scoring with Jaccard similarity
+- **Configurable Threshold**: Uses 60% similarity threshold for matches (configurable) to balance accuracy and recall
+- **Enhanced Confidence Scoring**: Factors in fuzzy match scores (60-100% similarity), multiple match availability, and data recency bonuses
+
+**Tag-Based Matching Process**
+```typescript
+interface FuzzyTagMatcher {
+  // Extract search tags from form fields
+  generateSearchTags(detectedFields: FormField[]): string[];
+  
+  // Calculate similarity between tags
+  calculateFuzzyScore(str1: string, str2: string): number; // 0-100%
+  
+  // Find database matches using tag similarity
+  findFuzzyTagMatches(databaseResponse: any, detectedFields: FormField[], fieldType: string): FuzzyMatch[];
+  
+  // Enhanced confidence calculation
+  calculateEnhancedMatchConfidence(field: FormField, fieldType: string, matches: any[]): number;
+}
+
+interface FuzzyMatch {
+  field: string;
+  value: string;
+  record: DatabaseRecord;
+  fuzzyScore: number; // 0-100% similarity
+  matchedTag: string; // Which tag matched
+  source: 'fuzzy_tag_match';
+}
+```
+
+### 9.2 Database Integration Enhancement
+
+**HTTP API Integration**
+- **Direct API Calls**: Uses HTTP requests to `http://localhost:3001/api/extract_personal_data` instead of MCP protocol for browser compatibility
+- **Tag-Enhanced Queries**: Includes extracted search tags in database queries to improve matching accuracy
+- **Batch Processing**: Retrieves multiple records with increased limit (20) for better fuzzy matching opportunities
+- **Fallback Support**: Maintains backward compatibility with existing MCP API calls
+
+**Database Query Structure**
+```typescript
+interface EnhancedDatabaseQuery {
+  user_id: string;
+  data_types: string[]; // Traditional field types
+  search_tags: string[]; // New: fuzzy search tags
+  filters: {
+    classification: string[];
+    active: boolean;
+  };
+  limit: number; // Increased for fuzzy matching
+}
+```
+
+### 9.3 Enhanced Caching System
+
+**Multi-Layer Caching Strategy**
+- **Traditional Cache**: Field-based caches with 5-minute TTL for standard lookups
+- **Raw Data Cache**: Stores complete database responses for fuzzy matching operations
+- **Tag Index Cache**: Pre-built index of all database tags for optimized fuzzy matching
+- **Hybrid Retrieval**: Supports both traditional field matching and fuzzy tag matching from cache
+
+**Cache Management**
+```typescript
+interface EnhancedCacheSystem {
+  // Traditional field-based caching
+  updateCache(databaseData: any): void;
+  
+  // New: Tag-based caching
+  buildTagIndex(databaseRecords: DatabaseRecord[]): Map<string, DatabaseRecord[]>;
+  getCachedMatchesWithTags(fieldsByType: Map<string, FormField[]>, detectedFields: FormField[]): Promise<CacheResult>;
+  
+  // Cache optimization
+  cleanupCache(): void; // Removes expired entries
+}
+```
+
+### 9.4 Tag Matching Examples
+
+**Example 1: Email Field Matching**
+```typescript
+// Database record with tags
+const emailRecord = {
+  id: "1",
+  title: "Personal Gmail",
+  content: { email: "user@gmail.com" },
+  tags: ["personal", "contact", "email", "gmail"],
+  created_at: "2024-12-15T15:30:00Z"
+};
+
+// Detected form field
+const emailField = {
+  identifier: "user-email-input",
+  label: "Email Address",
+  name: "email",
+  element: { type: "email" }
+};
+
+// Generated search tags: ["email", "address", "contact"]
+// Fuzzy matching results:
+// - "email" → "email" = 100% match
+// - "contact" → "contact" = 100% match
+// Result: High confidence match (95%+)
+```
+
+**Example 2: Phone Field Matching**
+```typescript
+// Database record with mobile tags
+const phoneRecord = {
+  id: "3",
+  title: "Mobile Phone",
+  content: { phone: "+1-555-123-4567" },
+  tags: ["personal", "contact", "phone", "mobile"]
+};
+
+// Detected field with mobile context
+const phoneField = {
+  identifier: "mobile-number",
+  label: "Mobile Phone",
+  contextualHints: ["contact details"]
+};
+
+// Generated tags: ["mobile", "phone", "contact"]
+// Fuzzy results: "mobile" → "mobile" = 100%, "phone" → "phone" = 100%
+// Result: Excellent match with mobile preference
+```
+
+### 9.5 Performance and Scalability
+
+**Optimization Strategies**
+- **Tag Extraction**: O(n) complexity where n = number of fields
+- **Fuzzy Matching**: O(m×t) where m = database records, t = tags per record
+- **Cache Optimization**: O(1) lookup with Map-based tag indexing
+- **Memory Management**: Automatic cleanup of expired cache entries
+
+**Performance Benchmarks**
+- **Tag Generation**: < 10ms for typical form (5-10 fields)
+- **Fuzzy Scoring**: < 1ms per tag pair comparison
+- **Database Matching**: < 50ms for 100 records with 20 tags each
+- **Cache Retrieval**: < 5ms for tagged cache hits
+
+### 9.6 Testing and Validation
+
+**Comprehensive Test Suite**
+```typescript
+// Browser-based testing (test-fuzzy-matching.html)
+// - Visual test interface with detailed results
+// - Real-time fuzzy matching demonstration
+// - Mock database with various tag combinations
+// - Performance measurement and reporting
+
+// Node.js testing (test-fuzzy-matching.cjs)
+// - Command-line test execution
+// - Automated validation of all fuzzy matching components
+// - Tag extraction and similarity scoring verification
+// - End-to-end matching workflow testing
+```
+
+**Test Coverage**
+- **Tag Extraction**: Tests with various field types and contexts
+- **Fuzzy Scoring**: Validates similarity calculations for edge cases
+- **Database Matching**: Tests with realistic tag combinations like `["personal","contact","email","gmail"]`
+- **Performance**: Benchmarks with large datasets (1000+ records)
+- **Edge Cases**: Handles empty tags, special characters, and unicode
+
+### 9.7 Migration and Compatibility
+
+**Backward Compatibility**
+- **Legacy Support**: All existing methods continue to work unchanged
+- **Gradual Enhancement**: Fuzzy matching automatically enhances traditional matching
+- **API Compatibility**: Maintains existing `matchFieldsToDatabase()` interface
+- **Cache Migration**: Seamlessly upgrades cache format with fallback support
+
+**Configuration Options**
+```typescript
+interface FuzzyMatchingConfig {
+  enabled: boolean; // Enable/disable fuzzy matching
+  similarityThreshold: number; // Default: 60 (0-100%)
+  maxCacheSize: number; // Tag index cache limit
+  cacheTimeout: number; // Cache TTL in milliseconds
+  debugMode: boolean; // Detailed logging for development
+}
+```
+
+This enhanced fuzzy tag matching system significantly improves the accuracy and intelligence of field-to-database matching while maintaining high performance and user privacy standards. The implementation provides seamless integration with existing systems and offers substantial improvements in handling diverse form field types and database tag structures.
+
 This comprehensive requirements document provides the blueprint for building a sophisticated browser agent that seamlessly integrates with the MCP Personal Data Management server to provide intelligent, secure, and user-friendly autofill capabilities while maintaining the highest standards of privacy and performance.
