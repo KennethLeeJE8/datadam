@@ -518,7 +518,20 @@ class StandaloneMCPHttpAPI {
           .select()
           .single();
 
-        if (error) throw error;
+        if (error) {
+          // If table doesn't exist or other DB issues, return 400 instead of 500
+          if (error.code === 'PGRST116' || error.message.includes('relation') || error.message.includes('does not exist')) {
+            console.log(`⚠️ data_field_definitions table not found, field definition not stored`);
+            return res.status(400).json({
+              success: false,
+              error: 'data_field_definitions table not found in database',
+              field_name,
+              data_type,
+              note: 'Field definition accepted but not stored due to missing table'
+            });
+          }
+          throw error;
+        }
 
         console.log(`✅ Added field definition: ${field_name}`);
 

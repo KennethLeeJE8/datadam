@@ -5,7 +5,11 @@
   "description": "A simple Chrome browser extension that integrates with your MCP Personal Data Server using direct stdio communication to provide intelligent form autofill.",
   "main": "background-complex.js",
   "scripts": {
-    "test": "echo \"Error: no test specified\" && exit 1",
+    "test": "playwright test --reporter=list",
+    "test:headed": "playwright test --headed --reporter=list",
+    "test:ui": "playwright test --ui",
+    "test:report": "playwright show-report",
+    "test:html": "playwright test --reporter=html",
     "start-enhanced": "node standalone-enhanced-api.js"
   },
   "keywords": [],
@@ -16,5 +20,8 @@
     "cors": "^2.8.5",
     "dotenv": "^16.5.0",
     "express": "^5.1.0"
+  },
+  "devDependencies": {
+    "@playwright/test": "^1.53.0"
   }
 }
