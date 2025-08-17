@@ -46,7 +46,7 @@ CREATE TABLE IF NOT EXISTS profiles (
 CREATE TABLE IF NOT EXISTS personal_data (
   id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
   user_id UUID NOT NULL,
-  data_type TEXT NOT NULL CHECK (data_type IN ('contact', 'document', 'preference', 'custom')),
+  data_type TEXT NOT NULL CHECK (data_type IN ('contact', 'document', 'preference', 'custom', 'personal')),
   title TEXT NOT NULL,
   content JSONB NOT NULL,
   tags TEXT[],

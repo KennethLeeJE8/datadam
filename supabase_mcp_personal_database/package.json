@@ -7,7 +7,10 @@
   "scripts": {
     "build": "tsc",
     "start": "node dist/server/index.js",
+    "start:http": "MCP_TRANSPORT=http node dist/server/index.js",
+    "start:production": "MCP_TRANSPORT=http NODE_ENV=production node dist/server/index.js",
     "dev": "node --loader ts-node/esm src/server/index.ts",
+    "dev:http": "MCP_TRANSPORT=http node --loader ts-node/esm src/server/index.ts",
     "test": "jest",
     "test:watch": "jest --watch",
     "test:coverage": "jest --coverage && node --loader ts-node/esm tests/coverage-report.ts",
@@ -33,6 +36,7 @@
     "zod": "^3.22.0"
   },
   "devDependencies": {
+    "@types/cors": "^2.8.19",
     "@types/jest": "^29.5.0",
     "@types/node": "^20.19.0",
     "c8": "^8.0.1",

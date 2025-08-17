@@ -2,7 +2,7 @@ import dotenv from 'dotenv';
 
 dotenv.config();
 
-import { supabaseAnon } from './database/client';
+import { supabaseAnon } from './database/client.js';
 
 async function checkConnection() {
   try {
