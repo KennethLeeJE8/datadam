@@ -174,6 +174,11 @@ class HTTPMCPServer {
     this.app.post('/mcp', validateApiKey, this.handleMCPPost.bind(this));
     this.app.get('/mcp', validateApiKey, this.handleMCPGet.bind(this));
     this.app.delete('/mcp', validateApiKey, this.handleMCPDelete.bind(this));
+
+    // Public MCP endpoints (no authentication) for standard MCP clients
+    this.app.post('/mcp-public', this.handleMCPPost.bind(this));
+    this.app.get('/mcp-public', this.handleMCPGet.bind(this));
+    this.app.delete('/mcp-public', this.handleMCPDelete.bind(this));
   }
 
   private async handleMCPPost(req: AuthenticatedRequest, res: express.Response): Promise<void> {
@@ -181,7 +186,8 @@ class HTTPMCPServer {
       body: req.body,
       authenticated: req.auth?.isAuthenticated || false,
       ip: req.ip,
-      requestId: (req as any).requestId
+      requestId: (req as any).requestId,
+      endpoint: req.path
     });
 
     try {
@@ -329,7 +335,8 @@ class HTTPMCPServer {
         logger.info(`HTTP MCP Server listening on port ${port}`);
         console.log(`HTTP MCP Server listening on port ${port}`);
         console.log(`Health check: http://localhost:${port}/health`);
-        console.log(`MCP endpoint: http://localhost:${port}/mcp`);
+        console.log(`MCP endpoint (authenticated): http://localhost:${port}/mcp`);
+        console.log(`MCP endpoint (public): http://localhost:${port}/mcp-public`);
       });
 
       // Graceful shutdown handling
