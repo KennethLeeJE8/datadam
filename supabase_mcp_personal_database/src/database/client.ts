@@ -2,17 +2,31 @@ import { createClient } from '@supabase/supabase-js';
 import type { Database } from './types.js';
 
 function validateEnvironmentVariables() {
+  const missing = [];
+  
   if (!process.env.SUPABASE_URL) {
-    throw new Error('Missing SUPABASE_URL environment variable');
+    missing.push('SUPABASE_URL');
   }
 
   if (!process.env.SUPABASE_ANON_KEY) {
-    throw new Error('Missing SUPABASE_ANON_KEY environment variable');
+    missing.push('SUPABASE_ANON_KEY');
   }
 
   if (!process.env.SUPABASE_SERVICE_ROLE_KEY) {
-    throw new Error('Missing SUPABASE_SERVICE_ROLE_KEY environment variable');
+    missing.push('SUPABASE_SERVICE_ROLE_KEY');
   }
+
+  if (missing.length > 0) {
+    console.error('Missing required environment variables:', missing);
+    console.error('Available environment variables:', Object.keys(process.env).filter(key => key.startsWith('SUPABASE')));
+    throw new Error(`Missing required environment variables: ${missing.join(', ')}`);
+  }
+
+  // Log (partial) values for debugging
+  console.log('Environment variables loaded:');
+  console.log('SUPABASE_URL:', process.env.SUPABASE_URL);
+  console.log('SUPABASE_ANON_KEY:', process.env.SUPABASE_ANON_KEY?.substring(0, 20) + '...');
+  console.log('SUPABASE_SERVICE_ROLE_KEY:', process.env.SUPABASE_SERVICE_ROLE_KEY?.substring(0, 20) + '...');
 }
 
 const supabaseConfig = {
@@ -91,18 +105,46 @@ export const supabase = supabaseAdmin;
 // Initialize database connection and verify tables exist
 export async function initializeDatabase(): Promise<void> {
   try {
-    // Test connection with a simple query
-    const { error } = await supabaseAdmin
+    console.log('Attempting to initialize database...');
+    
+    // First test basic connectivity
+    const { data: healthCheck, error: healthError } = await supabaseAdmin
+      .from('information_schema.tables')
+      .select('table_name')
+      .eq('table_schema', 'public')
+      .limit(1);
+      
+    if (healthError) {
+      console.error('Health check failed:', healthError);
+      // Try with a simpler approach - just check if we can authenticate
+      const { data: authTest, error: authError } = await supabaseAdmin.auth.getSession();
+      console.error('Auth test result:', { authError });
+    }
+
+    // Test connection with personal_data table
+    const { data, error } = await supabaseAdmin
       .from('personal_data')
       .select('id')
       .limit(1);
 
     if (error) {
       console.error('Database connection failed:', error.message);
+      console.error('Full error details:', JSON.stringify(error, null, 2));
+      console.error('Error code:', error.code);
+      console.error('Error hint:', error.hint);
+      console.error('Using SUPABASE_URL:', process.env.SUPABASE_URL);
+      console.error('Using SERVICE_ROLE_KEY prefix:', process.env.SUPABASE_SERVICE_ROLE_KEY?.substring(0, 20) + '...');
+      
+      // Check if the table exists at all
+      if (error.code === 'PGRST116' || error.message.includes('does not exist')) {
+        console.error('The personal_data table does not exist. Database may need to be set up.');
+      }
+      
       throw new Error(`Database initialization failed: ${error.message}`);
     }
 
-    console.error('Database connection successful');
+    console.log('Database connection successful');
+    console.log('Query returned:', data?.length || 0, 'rows');
   } catch (error) {
     console.error('Failed to initialize database:', error);
     throw error;

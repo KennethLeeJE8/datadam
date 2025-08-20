@@ -495,10 +495,10 @@ class HTTPMCPServer {
   private async makeInternalMCPRequest(request: any): Promise<any> {
     // Make an internal request to the MCP endpoint to ensure consistency
     const port = process.env.PORT || 3000;
-    const url = `http://localhost:${port}/mcp-public`;
+    const url = `http://localhost:${port}/mcp`;
     
-    return new Promise((resolve, reject) => {
-      const http = require('http');
+    return new Promise(async (resolve, reject) => {
+      const { default: http } = await import('http');
       const postData = JSON.stringify(request);
       
       const options = {
