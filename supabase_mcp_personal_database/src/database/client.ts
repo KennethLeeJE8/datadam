@@ -107,16 +107,16 @@ export async function initializeDatabase(): Promise<void> {
   try {
     console.log('Attempting to initialize database...');
     
-    // First test basic connectivity
+    // First test basic connectivity with a simple query
     const { data: healthCheck, error: healthError } = await supabaseAdmin
-      .from('information_schema.tables')
-      .select('table_name')
-      .eq('table_schema', 'public')
-      .limit(1);
+      .from('personal_data')
+      .select('id')
+      .limit(0); // Just test the connection, don't actually fetch data
       
-    if (healthError) {
+    if (healthError && healthError.code !== 'PGRST116') {
+      // PGRST116 means table doesn't exist, which is different from connection issues
       console.error('Health check failed:', healthError);
-      // Try with a simpler approach - just check if we can authenticate
+      // Try auth test as fallback
       const { data: authTest, error: authError } = await supabaseAdmin.auth.getSession();
       console.error('Auth test result:', { authError });
     }

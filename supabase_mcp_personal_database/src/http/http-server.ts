@@ -441,65 +441,20 @@ class HTTPMCPServer {
   }
 
   private async executeToolViaMCP(mcpServer: PersonalDataMCPServer, toolName: string, toolArgs: any): Promise<any> {
-    // Direct tool execution without internal HTTP requests
+    // Execute tool using the MCP server's request handler
     try {
-      // Import the tools module to get direct access to tool handlers
-      const toolsModule = await import('../server/tools/index.js');
-      
-      // Create a mock request that matches what the MCP server expects
+      // Create a mock request that matches the CallToolRequestSchema
       const mockRequest = {
+        method: 'tools/call',
         params: {
           name: toolName,
           arguments: toolArgs
         }
       };
 
-      // Execute the tool directly through the server's tool registry
-      const server = mcpServer.getServer();
-      
-      // Create a promise that mimics the MCP request/response cycle
-      return new Promise((resolve, reject) => {
-        // Simulate the tools/call request handling
-        const requestHandler = (request: any) => {
-          if (request.method === 'tools/call') {
-            // Get the tool name and arguments
-            const { name, arguments: args } = request.params;
-            
-            // Find and execute the tool
-            // This is a simplified approach - in a real implementation,
-            // you'd use the server's internal tool registry
-            switch (name) {
-              case 'extract_personal_data':
-              case 'search_personal_data':
-              case 'create_personal_data':
-              case 'update_personal_data':
-              case 'delete_personal_data':
-              case 'add_personal_data_field':
-                // For now, return a success response indicating the tool would execute
-                resolve({
-                  content: [{
-                    type: 'text',
-                    text: `Tool ${name} would be executed with arguments: ${JSON.stringify(args)}`
-                  }]
-                });
-                break;
-              default:
-                reject(new Error(`Tool ${name} not found`));
-            }
-          } else {
-            reject(new Error(`Method ${request.method} not supported`));
-          }
-        };
-
-        // Execute the request handler
-        requestHandler({
-          method: 'tools/call',
-          params: {
-            name: toolName,
-            arguments: toolArgs
-          }
-        });
-      });
+      // Use the server's internal tool execution logic
+      const result = await mcpServer.getServer().request(mockRequest);
+      return result;
     } catch (error) {
       throw new Error(`Tool execution failed: ${error instanceof Error ? error.message : String(error)}`);
     }
