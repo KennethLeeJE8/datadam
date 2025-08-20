@@ -384,29 +384,17 @@ class HTTPMCPServer {
       const mcpServer = new PersonalDataMCPServer();
       await mcpServer.initializeDatabase();
       
-      // Create a mock MCP request for tool execution
-      const mockMCPRequest = {
-        jsonrpc: '2.0' as const,
-        id: Date.now(),
-        method: 'tools/call' as const,
-        params: {
-          name: toolName,
-          arguments: toolArgs
-        }
-      };
-
-      // Use a temporary transport to handle the request
+      // Create a temporary transport and connect the server
+      const transport = new StreamableHTTPServerTransport({
+        sessionIdGenerator: () => randomUUID()
+      });
+      
+      // Connect the server to the transport
+      await mcpServer.getServer().connect(transport);
+      
+      // Now we can use the server's request method
       let result;
       try {
-        // Since we can't easily use the existing transport infrastructure,
-        // we'll create a mock request that goes through the tool handler directly
-        const { CallToolRequestSchema } = await import('@modelcontextprotocol/sdk/types.js');
-        
-        // Get the server and its request handlers
-        const server = mcpServer.getServer();
-        
-        // We need to directly call the tool handler since we can't use transport
-        // This simulates what the MCP transport layer would do
         const toolResponse = await this.executeToolViaMCP(mcpServer, toolName, toolArgs);
         result = toolResponse;
       } catch (toolError) {
