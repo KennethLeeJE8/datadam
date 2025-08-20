@@ -10,7 +10,7 @@ import dotenv from 'dotenv';
 import { PersonalDataMCPServer } from '../server/PersonalDataMCPServer.js';
 import { logger, ErrorCategory } from '../utils/logger.js';
 import { errorMonitoring } from '../utils/monitoring.js';
-import { validateApiKey, rateLimit, requestTimeout, connectionLimit, AuthenticatedRequest } from './auth-middleware.js';
+import { rateLimit, requestTimeout, connectionLimit } from './auth-middleware.js';
 import { ToolRegistry } from './tool-registry.js';
 
 dotenv.config();
@@ -105,9 +105,8 @@ class HTTPMCPServer {
   }
 
   private setupRoutes(): void {
-    // Health check endpoint (no auth required)
+    // Health check endpoint
     this.app.get('/health', (req, res) => {
-      const authEnabled = !!process.env.MCP_API_KEY;
       const rateLimitConfig = {
         requests: parseInt(process.env.RATE_LIMIT_REQUESTS || '50'),
         window: parseInt(process.env.RATE_LIMIT_WINDOW || '900000')
@@ -123,7 +122,7 @@ class HTTPMCPServer {
         service: 'personal-data-mcp-server',
         transport: 'http',
         security: {
-          authenticationEnabled: authEnabled,
+          authenticationEnabled: false,
           rateLimitEnabled: true,
           corsEnabled: true,
           securityHeadersEnabled: true
@@ -140,7 +139,7 @@ class HTTPMCPServer {
       });
     });
 
-    // Metrics endpoint (no auth required)
+    // Metrics endpoint
     this.app.get('/metrics', (req, res) => {
       const memoryUsage = process.memoryUsage();
       res.status(200).json({
@@ -173,15 +172,10 @@ class HTTPMCPServer {
       });
     });
 
-    // MCP endpoints with authentication
-    this.app.post('/mcp', validateApiKey, this.handleMCPPost.bind(this));
-    this.app.get('/mcp', validateApiKey, this.handleMCPGet.bind(this));
-    this.app.delete('/mcp', validateApiKey, this.handleMCPDelete.bind(this));
-
-    // Public MCP endpoints (no authentication) for standard MCP clients
-    this.app.post('/mcp-public', this.handleMCPPost.bind(this));
-    this.app.get('/mcp-public', this.handleMCPGet.bind(this));
-    this.app.delete('/mcp-public', this.handleMCPDelete.bind(this));
+    // MCP endpoints
+    this.app.post('/mcp', this.handleMCPPost.bind(this));
+    this.app.get('/mcp', this.handleMCPGet.bind(this));
+    this.app.delete('/mcp', this.handleMCPDelete.bind(this));
 
     // REST API endpoints for easy AI agent integration
     this.app.get('/tools', this.handleListTools.bind(this));
@@ -189,10 +183,9 @@ class HTTPMCPServer {
     this.app.get('/', this.handleApiDocumentation.bind(this));
   }
 
-  private async handleMCPPost(req: AuthenticatedRequest, res: express.Response): Promise<void> {
+  private async handleMCPPost(req: express.Request, res: express.Response): Promise<void> {
     logger.info('Received MCP POST request', { 
       body: req.body,
-      authenticated: req.auth?.isAuthenticated || false,
       ip: req.ip,
       requestId: (req as any).requestId,
       endpoint: req.path
@@ -206,9 +199,13 @@ class HTTPMCPServer {
         // Reuse existing transport
         transport = this.transports.get(sessionId)!;
         logger.info('Reusing existing transport', { sessionId });
-      } else if (!sessionId && isInitializeRequest(req.body)) {
-        // New initialization request
-        logger.info('Creating new transport for initialization');
+      } else {
+        // Create new transport for any request without valid session
+        logger.info('Creating new transport', { 
+          hasSessionId: !!sessionId, 
+          isInit: isInitializeRequest(req.body),
+          requestMethod: req.body?.method 
+        });
         
         transport = new StreamableHTTPServerTransport({
           sessionIdGenerator: () => randomUUID(),
@@ -232,25 +229,6 @@ class HTTPMCPServer {
         await mcpServer.initializeDatabase();
         await mcpServer.getServer().connect(transport);
         await transport.handleRequest(req as any, res, req.body);
-        return;
-      } else {
-        // Invalid request
-        logger.warn('Invalid MCP request - no session ID or not initialization', 
-          ErrorCategory.VALIDATION, 
-          { metadata: { hasSessionId: !!sessionId, isInit: isInitializeRequest(req.body) } });
-        
-        res.status(400).json({
-          jsonrpc: '2.0',
-          error: {
-            code: -32000,
-            message: 'Bad Request: No valid session ID provided or not initialization request',
-            data: {
-              requestId: (req as any).requestId,
-              timestamp: new Date().toISOString()
-            }
-          },
-          id: null,
-        });
         return;
       }
 
@@ -276,12 +254,11 @@ class HTTPMCPServer {
     }
   }
 
-  private async handleMCPGet(req: AuthenticatedRequest, res: express.Response): Promise<void> {
+  private async handleMCPGet(req: express.Request, res: express.Response): Promise<void> {
     const sessionId = req.headers['mcp-session-id'] as string;
     
     logger.info('Received MCP GET request (SSE)', { 
       sessionId,
-      authenticated: req.auth?.isAuthenticated || false,
       ip: req.ip,
       requestId: (req as any).requestId
     });
@@ -308,12 +285,11 @@ class HTTPMCPServer {
     }
   }
 
-  private async handleMCPDelete(req: AuthenticatedRequest, res: express.Response): Promise<void> {
+  private async handleMCPDelete(req: express.Request, res: express.Response): Promise<void> {
     const sessionId = req.headers['mcp-session-id'] as string;
     
     logger.info('Received session termination request', { 
       sessionId,
-      authenticated: req.auth?.isAuthenticated || false,
       ip: req.ip,
       requestId: (req as any).requestId
     });
@@ -612,9 +588,9 @@ class HTTPMCPServer {
     <h2>MCP Protocol Endpoints</h2>
     
     <div class="endpoint">
-        <div><span class="method">POST</span> <span class="url">/mcp-public</span></div>
-        <p>Standard MCP JSON-RPC endpoint (no authentication required).</p>
-        <pre>curl -X POST ${baseUrl}/mcp-public \\
+        <div><span class="method">POST</span> <span class="url">/mcp</span></div>
+        <p>Standard MCP JSON-RPC endpoint.</p>
+        <pre>curl -X POST ${baseUrl}/mcp \\
   -H "Content-Type: application/json" \\
   -d '{"jsonrpc": "2.0", "method": "tools/list", "id": 1}'</pre>
     </div>
@@ -685,8 +661,7 @@ result = response.json()</pre>
         console.log(`REST API - Tools List: http://localhost:${port}/tools`);
         console.log(`REST API - Execute Tool: http://localhost:${port}/tools/{tool_name}`);
         console.log(`Health check: http://localhost:${port}/health`);
-        console.log(`MCP endpoint (authenticated): http://localhost:${port}/mcp`);
-        console.log(`MCP endpoint (public): http://localhost:${port}/mcp-public`);
+        console.log(`MCP endpoint: http://localhost:${port}/mcp`);
       });
 
       // Graceful shutdown handling
