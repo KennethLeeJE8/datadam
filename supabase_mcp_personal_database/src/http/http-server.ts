@@ -4,7 +4,7 @@ import express from 'express';
 import { randomUUID } from 'node:crypto';
 import cors from 'cors';
 import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js';
-import { isInitializeRequest } from '@modelcontextprotocol/sdk/types.js';
+import { isInitializeRequest, CallToolResultSchema } from '@modelcontextprotocol/sdk/types.js';
 import dotenv from 'dotenv';
 
 import { PersonalDataMCPServer } from '../server/PersonalDataMCPServer.js';
@@ -453,7 +453,7 @@ class HTTPMCPServer {
       };
 
       // Use the server's internal tool execution logic
-      const result = await mcpServer.getServer().request(mockRequest);
+      const result = await mcpServer.getServer().request(mockRequest, CallToolResultSchema);
       return result;
     } catch (error) {
       throw new Error(`Tool execution failed: ${error instanceof Error ? error.message : String(error)}`);
