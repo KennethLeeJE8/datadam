@@ -1,254 +1,267 @@
-# HTTP MCP Server Implementation Plan
+# HTTP MCP Gateway Implementation Plan
 
-## Overview
-Complete plan to convert the stdio-based MCP server to HTTP transport while maintaining full functionality and adding production-ready features.
+## Project Overview
+Build an HTTP-accessible MCP (Model Context Protocol) server that enables easy integration with any AI agent, chatbot, or tool through standard web APIs. The system will provide both MCP-compliant JSON-RPC endpoints and simplified REST endpoints for maximum compatibility.
 
----
+## Architecture Components
 
-## Phase 1: Core HTTP Transport Implementation ✅ COMPLETED
+### 1. Core MCP Server Class
+**File**: `core/mcp_server.py`
 
-### 1.1 HTTP Server Implementation (~30 minutes)
-- **✅ Create HTTP server** - `src/http/http-server.ts` using MCP SDK's `StreamableHTTPServerTransport`
-- **✅ Modify main entry point** - Add environment variable to choose between stdio/HTTP transport
-- **✅ Add health endpoint** - Basic `/health` for monitoring
+**Purpose**: Implement the core MCP protocol logic
 
-### 1.2 Transport Selection (~10 minutes)
-- **✅ Environment-based selection** - `MCP_TRANSPORT=http|stdio`
-- **✅ Backwards compatibility** - Existing stdio implementation unchanged
-- **✅ Package scripts** - Added `npm run dev:http` and `npm run start:http`
-
-### 1.3 Testing & Validation (~10 minutes)
-- **✅ Local HTTP testing** - Comprehensive Jest e2e test suite
-- **✅ All MCP operations verified** - Initialize, tools/list, resources/list, tools/call
-- **✅ Database integration confirmed** - Create/delete operations working
-- **✅ Session management tested** - UUID-based sessions with proper lifecycle
-
-**Status**: ✅ **COMPLETE** - All tests passing (13/13), production-ready HTTP transport
-
----
-
-## Phase 2: Basic Security ✅ COMPLETED (~20 minutes)
-
-### 2.1 API Key Authentication ✅ COMPLETED (~8 minutes)
-**Goal**: Add simple Bearer token validation for HTTP requests
-
-**✅ Implementation Complete**:
-- ✅ Added environment variable `MCP_API_KEY` for optional authentication
-- ✅ Created middleware function `validateApiKey()` in `src/http/auth-middleware.ts`
-- ✅ Check `Authorization: Bearer <token>` header against `MCP_API_KEY`
-- ✅ Applied middleware conditionally (only if `MCP_API_KEY` is set)
-- ✅ Return 401 Unauthorized for invalid/missing tokens when auth is enabled
-
-**✅ Files implemented**:
-- ✅ `src/http/http-server.ts` - Auth middleware added to routes
-- ✅ `src/http/auth-middleware.ts` - Complete auth logic implementation
-- ✅ Health endpoint shows auth status
-
-### 2.2 CORS Configuration ✅ COMPLETED (~5 minutes)
-**Goal**: Improve CORS setup for production use
-
-**✅ Implementation Complete**:
-- ✅ Added `CORS_ORIGINS` environment variable (comma-separated list)
-- ✅ Defaults to `localhost:*` patterns for development
-- ✅ Support wildcard patterns for browser extensions (`chrome-extension://*`)
-- ✅ Added `credentials: true` for authenticated requests
-- ✅ Expose custom headers (`mcp-session-id`, `last-event-id`, rate limit headers)
-
-### 2.3 Request Validation ✅ COMPLETED (~4 minutes)
-**Goal**: Add basic input sanitization and validation
-
-**✅ Implementation Complete**:
-- ✅ JSON payload size limits (configurable via `MAX_REQUEST_SIZE`)
-- ✅ Request timeout middleware (configurable via `REQUEST_TIMEOUT`)
-- ✅ Request rate limiting per IP with in-memory counter
-- ✅ Connection limiting for resource management
-- ✅ MCP protocol structure validation
-
-### 2.4 Security Headers ✅ COMPLETED (~3 minutes)
-**Goal**: Add basic security headers
-
-**✅ Headers implemented**:
-- ✅ `X-Content-Type-Options: nosniff`
-- ✅ `X-Frame-Options: DENY`
-- ✅ `X-XSS-Protection: 1; mode=block`
-- ✅ `Referrer-Policy: strict-origin-when-cross-origin`
-- ✅ `X-Request-ID: <uuid>` for request tracking
-
----
-
-## Phase 3: Production Configuration ✅ COMPLETED (~15 minutes)
-
-### 3.1 Environment Variables Documentation ✅ COMPLETED (~5 minutes)
-**Goal**: Document all required and optional environment variables
-
-**✅ Implementation Complete**:
-- ✅ Enhanced `.env.example` with comprehensive production settings
-- ✅ Documented all required and optional variables
-- ✅ Added production-specific configurations
-
-**✅ Required for HTTP mode**:
-```bash
-MCP_TRANSPORT=http
-NODE_ENV=production
-SUPABASE_URL=https://your-project.supabase.co
-SUPABASE_ANON_KEY=your-anon-key
-SUPABASE_SERVICE_ROLE_KEY=your-service-role-key
+**Key Methods**:
+```
+class MCPServer:
+    - initialize(protocol_version, capabilities) -> server_info
+    - list_tools() -> tools_array
+    - call_tool(name, arguments) -> result
+    - handle_request(method, params) -> response
 ```
 
-**✅ Optional production variables**:
-```bash
-# Authentication (optional)
-MCP_API_KEY=your-secret-api-key-here
+**Features**:
+- Tool registry management
+- Request routing and validation
+- Error handling and response formatting
+- Protocol version compatibility
 
-# CORS configuration
-CORS_ORIGINS=https://yourapp.com,chrome-extension://*
+### 2. HTTP Gateway Layer
+**File**: `api/gateway.py`
 
-# Performance (optimized for Render free tier)
-RATE_LIMIT_REQUESTS=50        # Reduced for limited resources
-RATE_LIMIT_WINDOW=900000      # 15 minutes in ms
-REQUEST_TIMEOUT=30000         # 30 seconds
-MAX_REQUEST_SIZE=100kb        # Render tier limit
-MAX_CONNECTIONS=3             # Render tier restriction
-CACHE_SIZE=100                # Maximum cache entries
+**Purpose**: FastAPI application that wraps the MCP server
 
-# Monitoring
-LOG_LEVEL=info
-ENABLE_REQUEST_LOGGING=true
+**Endpoints**:
+```
+POST /mcp
+    - Accept JSON-RPC MCP requests
+    - Route to core MCP server
+    - Return standard MCP responses
+
+GET /tools
+    - Return list of available tools
+    - Simple REST interface
+
+POST /tools/{tool_name}
+    - Direct tool execution
+    - Accept tool arguments in request body
+    - Return tool results
+
+GET /
+    - API documentation and examples
+    - Integration instructions
+
+GET /health
+    - Health check endpoint
 ```
 
-### 3.2 Render Deployment Configuration ✅ COMPLETED (~5 minutes)
-**Goal**: Add Render-specific configuration
+**Middleware**:
+- CORS configuration for browser compatibility
+- Request logging
+- Error handling middleware
+- (Future) Authentication middleware
 
-**✅ Files created/updated**:
-- ✅ Enhanced `.env.example` with Render-optimized settings
-- ✅ Updated `package.json` with `start:production` script
-- ✅ Documented Render deployment process in `render_deployment_process.md`
-- ✅ Added proper port handling (Render's dynamic PORT assignment)
+### 3. Tool Implementations
+**File**: `tools/`
 
-### 3.3 Error Handling Enhancement ✅ COMPLETED (~5 minutes)
-**Goal**: HTTP-specific error responses
-
-**✅ Implementation Complete**:
-- ✅ Standardized HTTP status codes for different error types
-- ✅ Added request ID tracking (`X-Request-ID` header) for debugging
-- ✅ Enhanced error logging with HTTP context and request IDs
-- ✅ Production-ready metrics endpoint (`/metrics`) with comprehensive system info:
-  - Memory usage, CPU usage, system information
-  - Active sessions, uptime, platform details
-  - HTTP configuration and environment data
-
----
-
-## Phase 4: Testing & Deployment ✅ COMPLETED (~15 minutes)
-
-### 4.1 Security Testing ✅ COMPLETED (~8 minutes)
-**Goal**: Test authentication and security features
-
-**✅ Test scenarios completed**:
-- ✅ API key validation (optional authentication working correctly)
-- ✅ CORS preflight and actual requests (working with wildcard support)
-- ✅ Rate limiting behavior (50 requests/15min window active)
-- ✅ Request size/timeout limits (100kb/30sec configured)
-- ✅ Security headers presence (all 4 headers + request ID implemented)
-- ✅ Request validation (malformed JSON properly rejected)
-
-**📊 Security Test Results**: 6/7 tests passed (86% success rate)
-
-### 4.2 Production Deployment Test ✅ COMPLETED (~7 minutes)
-**Goal**: Verify Render deployment readiness
-
-**✅ Verification complete**:
-1. ✅ Production build successful (`npm run build` passes)
-2. ✅ Production startup verified (`npm run start:production` works)
-3. ✅ Health endpoint accessibility confirmed (`/health` returns proper status)
-4. ✅ Metrics endpoint functional (`/metrics` shows system information)
-5. ✅ Environment variable configuration documented
-6. ✅ Render deployment guide created with exact environment variables
-
----
-
-## 🎉 **COMPLETE IMPLEMENTATION STATUS**
-
-### ✅ **ALL PHASES COMPLETED**:
-
-#### **Phase 1: HTTP Transport** ✅ COMPLETE
-- ✅ **HTTP Transport Layer** - Full MCP-over-HTTP with StreamableHTTPServerTransport
-- ✅ **Session Management** - UUID-based sessions with cleanup
-- ✅ **Database Integration** - Supabase operations working perfectly
-- ✅ **Error Recovery** - Graceful degradation system functional
-- ✅ **Health Monitoring** - `/health` endpoint operational
-- ✅ **Comprehensive Testing** - 37/37 e2e tests passing
-- ✅ **Package Scripts** - Development and production commands
-
-#### **Phase 2: Security** ✅ COMPLETE
-- ✅ **Optional API Key Authentication** - Bearer token validation
-- ✅ **Advanced CORS Configuration** - Wildcard support, custom headers
-- ✅ **Request Validation** - Size limits, timeouts, rate limiting
-- ✅ **Security Headers** - Complete HTTP security header suite + request tracking
-
-#### **Phase 3: Production Configuration** ✅ COMPLETE
-- ✅ **Environment Variables** - Comprehensive `.env.example` with Render optimization
-- ✅ **Deployment Scripts** - Production build and start commands
-- ✅ **Enhanced Error Handling** - Request IDs, structured error responses
-- ✅ **Production Metrics** - Detailed system monitoring endpoint
-
-#### **Phase 4: Testing & Deployment** ✅ COMPLETE
-- ✅ **Security Testing** - Validated all security features (86% success rate)
-- ✅ **Production Testing** - Verified build, startup, and endpoints
-- ✅ **Deployment Documentation** - Complete Render deployment guide
-
-### 🔑 **Production-Ready Features**:
-1. ✅ **Full MCP Protocol Support** - All tools, resources, and prompts exposed
-2. ✅ **Secure Database Operations** - Create, read, update, delete with rate limiting
-3. ✅ **Session Management** - Multi-request sessions with proper lifecycle
-4. ✅ **Error Handling** - Graceful degradation + request tracking
-5. ✅ **Security Suite** - CORS, headers, rate limiting, optional authentication
-6. ✅ **Production Monitoring** - Health checks, metrics, logging
-7. ✅ **Render Optimization** - Configured for free tier constraints
-
-### 📊 **Final Test Results**:
+**Structure**:
 ```
-✅ All 37 E2E tests passing
-✅ Security validation: 6/7 tests passed
-✅ Production build successful
-✅ Health endpoint: Comprehensive status reporting
-✅ Metrics endpoint: Full system monitoring
-✅ Authentication: Optional (can deploy without API key)
-✅ Rate limiting: 50 requests/15min (Render optimized)
-✅ CORS: Browser extension + custom domain support
+tools/
+├── __init__.py
+├── base_tool.py (Abstract base class)
+├── data_search.py
+├── data_analysis.py
+├── file_operations.py
+└── custom_tools.py
 ```
 
-### 🚀 **READY FOR PRODUCTION DEPLOYMENT**:
-- ✅ **Current State**: Production-ready with all security features
-- ✅ **Security Level**: Complete (optional authentication, rate limiting, CORS, headers)
-- ✅ **Production Readiness**: All phases complete, deployment tested
-- ✅ **Render Compatibility**: Optimized for free tier, auto-scaling ready
+**Base Tool Interface**:
+```
+class BaseTool:
+    - name: str
+    - description: str
+    - input_schema: dict
+    - execute(arguments) -> result
+    - validate_input(arguments) -> bool
+```
 
----
+### 4. Client Wrapper
+**File**: `client/mcp_client.py`
 
-## Key Technical Decisions Made
+**Purpose**: Standalone script that translates stdio MCP protocol to HTTP
 
-### ✅ **Architecture Choices**:
-1. **MCP SDK StreamableHTTPServerTransport** - Leveraged existing MCP HTTP support instead of custom implementation
-2. **Express.js Framework** - Simple, well-supported HTTP server framework
-3. **Session Management** - UUID-based sessions with in-memory storage and cleanup
-4. **Transport Selection** - Environment variable switching between stdio/HTTP
-5. **Error Handling** - Reused existing error recovery system
+**Flow**:
+```
+1. Read JSON-RPC request from stdin
+2. Parse method and parameters
+3. Convert to HTTP request
+4. Send to MCP Gateway server
+5. Convert HTTP response back to JSON-RPC
+6. Write response to stdout
+```
 
-### ✅ **No Major Limitations Found**:
-- MCP SDK provides robust HTTP transport
-- Existing architecture was already HTTP-compatible
-- Database integration works seamlessly
-- Session management scales appropriately
-- Error recovery system handles edge cases
+**Configuration**:
+- Environment variable for server URL
+- Configurable timeout and retry logic
+- Connection pooling for performance
 
-### 🎯 **DEPLOYMENT READY**:
-**All phases complete! Total implementation time: ~90 minutes**
+### 5. Configuration System
+**File**: `config/settings.py`
 
-**✅ Ready to deploy to Render with:**
-- Full HTTP MCP transport
-- Production security features
-- Comprehensive monitoring
-- Optimized for Render free tier
+**Settings**:
+```
+- SERVER_URL: Base URL for deployment
+- CORS_ORIGINS: Allowed origins for CORS
+- API_KEYS: (Future) Authentication keys
+- TOOL_CONFIGS: Tool-specific configurations
+- LOGGING_LEVEL: Debug/Info/Warning levels
+```
 
-**🚀 Next step: Deploy to Render using the environment variables in `render_deployment_process.md`**
+## Implementation Steps
+
+### Phase 1: Core Infrastructure
+1. **Set up FastAPI application structure**
+   - Create main application file
+   - Configure CORS middleware
+   - Set up basic routing
+
+2. **Implement core MCP server class**
+   - Handle initialize requests
+   - Implement tool registry
+   - Create request routing logic
+
+3. **Create basic tool framework**
+   - Abstract base tool class
+   - Tool registration system
+   - Input validation framework
+
+### Phase 2: HTTP Endpoints
+1. **Implement MCP JSON-RPC endpoint**
+   - POST /mcp route
+   - Request validation
+   - Response formatting
+
+2. **Create REST API endpoints**
+   - GET /tools for tool listing
+   - POST /tools/{name} for tool execution
+   - GET / for documentation
+
+3. **Add utility endpoints**
+   - Health check endpoint
+   - API documentation endpoint
+
+### Phase 3: Tool Development
+1. **Implement example tools**
+   - Data search functionality
+   - Basic data analysis
+   - File operations
+
+2. **Create tool schemas**
+   - JSON schema for each tool
+   - Input validation rules
+   - Output format specifications
+
+3. **Add error handling**
+   - Tool-specific error handling
+   - User-friendly error messages
+   - Proper HTTP status codes
+
+### Phase 4: Client Integration
+1. **Build stdio-to-HTTP client**
+   - JSON-RPC protocol handling
+   - HTTP request conversion
+   - Response translation
+
+2. **Create integration examples**
+   - Claude Desktop configuration
+   - LangChain integration example
+   - Direct HTTP usage examples
+
+3. **Documentation and guides**
+   - Setup instructions
+   - API reference
+   - Integration examples
+
+### Phase 5: Deployment and Testing
+1. **Deployment configuration**
+   - Render.com deployment files
+   - Environment variable setup
+   - Production configurations
+
+2. **Testing framework**
+   - Unit tests for tools
+   - Integration tests for API
+   - Client wrapper testing
+
+3. **Documentation**
+   - API documentation
+   - Integration guides
+   - Troubleshooting guide
+
+## File Structure
+```
+project_root/
+├── main.py (FastAPI application entry point)
+├── requirements.txt
+├── render.yaml (Deployment configuration)
+├── core/
+│   ├── __init__.py
+│   └── mcp_server.py
+├── api/
+│   ├── __init__.py
+│   ├── gateway.py
+│   └── middleware.py
+├── tools/
+│   ├── __init__.py
+│   ├── base_tool.py
+│   └── [specific tool files]
+├── client/
+│   ├── __init__.py
+│   └── mcp_client.py
+├── config/
+│   ├── __init__.py
+│   └── settings.py
+├── tests/
+│   ├── test_api.py
+│   ├── test_tools.py
+│   └── test_client.py
+└── docs/
+    ├── API.md
+    ├── INTEGRATION.md
+    └── DEPLOYMENT.md
+```
+
+## Key Design Decisions
+
+### 1. Dual Interface Approach
+- Provide both MCP JSON-RPC and REST endpoints
+- Maximum compatibility with different AI frameworks
+- Easy testing and debugging through REST endpoints
+
+### 2. Modular Tool System
+- Plugin-style tool architecture
+- Easy to add new tools without core changes
+- Consistent interface across all tools
+
+### 3. Stateless Design
+- No session management initially
+- Each request is independent
+- Easy horizontal scaling
+
+### 4. Client Abstraction
+- Separate client wrapper for MCP compatibility
+- Hide HTTP details from MCP clients
+- Standard stdio interface preservation
+
+## Success Metrics
+- API responds to basic requests within 200ms
+- Client wrapper successfully translates all MCP protocol methods
+- Tools can be called via both MCP and REST interfaces
+- Zero-configuration deployment to Render.com
+- Complete integration examples for major AI frameworks
+
+## Future Enhancements
+- API key authentication system
+- Rate limiting and usage analytics
+- WebSocket support for real-time tools
+- Tool marketplace and discovery
+- Multi-tenant support

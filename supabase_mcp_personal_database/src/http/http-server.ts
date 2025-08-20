@@ -11,6 +11,7 @@ import { PersonalDataMCPServer } from '../server/PersonalDataMCPServer.js';
 import { logger, ErrorCategory } from '../utils/logger.js';
 import { errorMonitoring } from '../utils/monitoring.js';
 import { validateApiKey, rateLimit, requestTimeout, connectionLimit, AuthenticatedRequest } from './auth-middleware.js';
+import { ToolRegistry } from './tool-registry.js';
 
 dotenv.config();
 
@@ -18,9 +19,11 @@ class HTTPMCPServer {
   private app: express.Application;
   private transports: Map<string, StreamableHTTPServerTransport> = new Map();
   private server: any;
+  private toolRegistry: ToolRegistry;
 
   constructor() {
     this.app = express();
+    this.toolRegistry = ToolRegistry.getInstance();
     this.setupMiddleware();
     this.setupRoutes();
   }
@@ -179,6 +182,11 @@ class HTTPMCPServer {
     this.app.post('/mcp-public', this.handleMCPPost.bind(this));
     this.app.get('/mcp-public', this.handleMCPGet.bind(this));
     this.app.delete('/mcp-public', this.handleMCPDelete.bind(this));
+
+    // REST API endpoints for easy AI agent integration
+    this.app.get('/tools', this.handleListTools.bind(this));
+    this.app.post('/tools/:toolName', this.handleExecuteTool.bind(this));
+    this.app.get('/', this.handleApiDocumentation.bind(this));
   }
 
   private async handleMCPPost(req: AuthenticatedRequest, res: express.Response): Promise<void> {
@@ -327,6 +335,345 @@ class HTTPMCPServer {
     }
   }
 
+  private async handleListTools(req: express.Request, res: express.Response): Promise<void> {
+    logger.info('Received REST API request for tools list', { 
+      ip: req.ip,
+      requestId: (req as any).requestId
+    });
+
+    try {
+      // Initialize tool registry if needed
+      await this.toolRegistry.initialize();
+      
+      const tools = this.toolRegistry.getTools();
+      
+      res.status(200).json({
+        tools: tools,
+        server_info: {
+          name: 'personal-data-server',
+          version: '1.0.0',
+          capabilities: ['tools', 'resources', 'prompts']
+        },
+        endpoints: {
+          list_tools: 'GET /tools',
+          execute_tool: 'POST /tools/{tool_name}',
+          mcp_endpoint: 'POST /mcp-public',
+          documentation: 'GET /',
+          health: 'GET /health'
+        },
+        usage_examples: {
+          list_tools: `curl ${req.protocol}://${req.get('host')}/tools`,
+          execute_tool: `curl -X POST ${req.protocol}://${req.get('host')}/tools/search_personal_data -H "Content-Type: application/json" -d '{"user_id": "user123", "query": "example"}'`
+        },
+        timestamp: new Date().toISOString()
+      });
+    } catch (error) {
+      logger.error('Error handling tools list request', error as Error, ErrorCategory.NETWORK);
+      res.status(500).json({
+        error: 'Internal server error',
+        message: 'Failed to retrieve tools list',
+        timestamp: new Date().toISOString()
+      });
+    }
+  }
+
+  private async handleExecuteTool(req: express.Request, res: express.Response): Promise<void> {
+    const toolName = req.params.toolName;
+    const toolArgs = req.body;
+    
+    logger.info('Received REST API tool execution request', { 
+      toolName,
+      ip: req.ip,
+      requestId: (req as any).requestId
+    });
+
+    try {
+      // Initialize tool registry if needed
+      await this.toolRegistry.initialize();
+      
+      // Check if tool exists
+      const toolDef = this.toolRegistry.getTool(toolName);
+      if (!toolDef) {
+        res.status(404).json({
+          error: 'Tool not found',
+          message: `Tool '${toolName}' is not available`,
+          available_tools: this.toolRegistry.getTools().map(t => t.name),
+          timestamp: new Date().toISOString()
+        });
+        return;
+      }
+      
+      // Execute tool via existing MCP infrastructure
+      // Create a new MCP server instance and transport for this REST request
+      const mcpServer = new PersonalDataMCPServer();
+      await mcpServer.initializeDatabase();
+      
+      // Create a mock MCP request for tool execution
+      const mockMCPRequest = {
+        jsonrpc: '2.0' as const,
+        id: Date.now(),
+        method: 'tools/call' as const,
+        params: {
+          name: toolName,
+          arguments: toolArgs
+        }
+      };
+
+      // Use a temporary transport to handle the request
+      let result;
+      try {
+        // Since we can't easily use the existing transport infrastructure,
+        // we'll create a mock request that goes through the tool handler directly
+        const { CallToolRequestSchema } = await import('@modelcontextprotocol/sdk/types.js');
+        
+        // Get the server and its request handlers
+        const server = mcpServer.getServer();
+        
+        // We need to directly call the tool handler since we can't use transport
+        // This simulates what the MCP transport layer would do
+        const toolResponse = await this.executeToolViaMCP(mcpServer, toolName, toolArgs);
+        result = toolResponse;
+      } catch (toolError) {
+        throw new Error(`Tool execution failed: ${(toolError as Error).message}`);
+      }
+      
+      res.status(200).json({
+        tool: toolName,
+        success: true,
+        result: result,
+        timestamp: new Date().toISOString()
+      });
+    } catch (error) {
+      logger.error('Error executing tool via REST API', error as Error, ErrorCategory.NETWORK, { toolName });
+      
+      const errorMessage = (error as Error).message;
+      if (errorMessage.includes('validation') || errorMessage.includes('invalid')) {
+        res.status(400).json({
+          error: 'Invalid input',
+          message: errorMessage,
+          tool_schema: this.toolRegistry.getTool(toolName)?.inputSchema,
+          timestamp: new Date().toISOString()
+        });
+      } else {
+        res.status(500).json({
+          error: 'Internal server error',
+          message: `Failed to execute tool: ${toolName}`,
+          timestamp: new Date().toISOString()
+        });
+      }
+    }
+  }
+
+  private async executeToolViaMCP(mcpServer: PersonalDataMCPServer, toolName: string, toolArgs: any): Promise<any> {
+    // Create an in-memory transport to execute the tool
+    // This is a simplified approach that avoids the complexity of HTTP transport setup
+    return new Promise((resolve, reject) => {
+      // Import the tool execution function from the tools module
+      import('../server/tools/index.js').then(async (toolsModule) => {
+        try {
+          // Create a mock request that matches what the MCP server expects
+          const mockRequest = {
+            params: {
+              name: toolName,
+              arguments: toolArgs
+            }
+          };
+
+          // Get the server instance
+          const server = mcpServer.getServer();
+          
+          // Instead of going through the transport layer, we'll call the tool handler directly
+          // by simulating the request processing that normally happens in the server
+          const requestId = `req_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+          
+          // Create the context that the tool handler expects
+          const mockLogger = {
+            info: (msg: string, data?: any) => logger.info(msg, data),
+            error: (msg: string, error: Error, category: any, data?: any) => logger.error(msg, error, category, data),
+            debug: (msg: string, data?: any) => logger.info(msg, data),
+            getCorrelationId: () => requestId
+          };
+
+          // For now, we'll use the existing MCP public endpoint internally
+          // This ensures we use exactly the same logic
+          const internalRequest = {
+            jsonrpc: '2.0' as const,
+            id: Date.now(),
+            method: 'tools/call' as const,
+            params: {
+              name: toolName,
+              arguments: toolArgs
+            }
+          };
+
+          // Make an internal HTTP request to our own MCP endpoint
+          const result = await this.makeInternalMCPRequest(internalRequest);
+          resolve(result);
+        } catch (error) {
+          reject(error);
+        }
+      }).catch(reject);
+    });
+  }
+
+  private async makeInternalMCPRequest(request: any): Promise<any> {
+    // Make an internal request to the MCP endpoint to ensure consistency
+    const port = process.env.PORT || 3000;
+    const url = `http://localhost:${port}/mcp-public`;
+    
+    return new Promise((resolve, reject) => {
+      const http = require('http');
+      const postData = JSON.stringify(request);
+      
+      const options = {
+        hostname: 'localhost',
+        port: port,
+        path: '/mcp-public',
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Content-Length': Buffer.byteLength(postData)
+        }
+      };
+
+      const req = http.request(options, (res: any) => {
+        let data = '';
+        res.on('data', (chunk: string) => data += chunk);
+        res.on('end', () => {
+          try {
+            const response = JSON.parse(data);
+            if (response.error) {
+              reject(new Error(response.error.message || 'MCP request failed'));
+            } else {
+              resolve(response.result);
+            }
+          } catch (error) {
+            reject(new Error(`Invalid response: ${error}`));
+          }
+        });
+      });
+
+      req.on('error', reject);
+      req.write(postData);
+      req.end();
+    });
+  }
+
+  private async handleApiDocumentation(req: express.Request, res: express.Response): Promise<void> {
+    logger.info('Received API documentation request', { 
+      ip: req.ip,
+      requestId: (req as any).requestId
+    });
+
+    const baseUrl = `${req.protocol}://${req.get('host')}`;
+    
+    const htmlDoc = `
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Personal Data MCP Server API</title>
+    <style>
+        body { font-family: Arial, sans-serif; max-width: 1200px; margin: 0 auto; padding: 20px; }
+        .endpoint { background: #f5f5f5; padding: 15px; margin: 10px 0; border-radius: 5px; }
+        .method { font-weight: bold; color: #007acc; }
+        .url { font-family: monospace; background: #e8e8e8; padding: 2px 4px; }
+        pre { background: #f8f8f8; padding: 10px; border-radius: 3px; overflow-x: auto; }
+        .claude-config { background: #e8f4f8; padding: 15px; border-radius: 5px; margin: 20px 0; }
+    </style>
+</head>
+<body>
+    <h1>Personal Data MCP Server API</h1>
+    
+    <h2>Overview</h2>
+    <p>This server provides both MCP (Model Context Protocol) and REST API access to personal data management tools.</p>
+    
+    <h2>REST API Endpoints</h2>
+    
+    <div class="endpoint">
+        <div><span class="method">GET</span> <span class="url">/tools</span></div>
+        <p>List all available tools with their schemas and descriptions.</p>
+        <pre>curl ${baseUrl}/tools</pre>
+    </div>
+    
+    <div class="endpoint">
+        <div><span class="method">POST</span> <span class="url">/tools/{tool_name}</span></div>
+        <p>Execute a specific tool with provided arguments.</p>
+        <pre>curl -X POST ${baseUrl}/tools/search_personal_data \\
+  -H "Content-Type: application/json" \\
+  -d '{"user_id": "user123", "query": "contact info"}'</pre>
+    </div>
+    
+    <div class="endpoint">
+        <div><span class="method">GET</span> <span class="url">/health</span></div>
+        <p>Health check endpoint for monitoring.</p>
+        <pre>curl ${baseUrl}/health</pre>
+    </div>
+    
+    <h2>MCP Protocol Endpoints</h2>
+    
+    <div class="endpoint">
+        <div><span class="method">POST</span> <span class="url">/mcp-public</span></div>
+        <p>Standard MCP JSON-RPC endpoint (no authentication required).</p>
+        <pre>curl -X POST ${baseUrl}/mcp-public \\
+  -H "Content-Type: application/json" \\
+  -d '{"jsonrpc": "2.0", "method": "tools/list", "id": 1}'</pre>
+    </div>
+    
+    <h2>Claude Desktop Integration</h2>
+    <div class="claude-config">
+        <h3>Setup Instructions</h3>
+        <p>1. Create a bridge client script (see repository)</p>
+        <p>2. Configure Claude Desktop with:</p>
+        <pre>{
+  "mcpServers": {
+    "personal-data": {
+      "command": "node",
+      "args": ["path/to/mcp-bridge.js", "${baseUrl}"]
+    }
+  }
+}</pre>
+    </div>
+    
+    <h2>Available Tools</h2>
+    <ul>
+        <li><strong>extract_personal_data</strong> - Extract personal data with filtering</li>
+        <li><strong>create_personal_data</strong> - Create new personal data records</li>
+        <li><strong>update_personal_data</strong> - Update existing records</li>
+        <li><strong>delete_personal_data</strong> - Delete records (soft or hard)</li>
+        <li><strong>search_personal_data</strong> - Search through personal data</li>
+        <li><strong>add_personal_data_field</strong> - Add new field definitions</li>
+    </ul>
+    
+    <h2>Integration Examples</h2>
+    <h3>JavaScript/Node.js</h3>
+    <pre>const response = await fetch('${baseUrl}/tools/search_personal_data', {
+  method: 'POST',
+  headers: { 'Content-Type': 'application/json' },
+  body: JSON.stringify({
+    user_id: 'user123',
+    query: 'documents'
+  })
+});
+const result = await response.json();</pre>
+    
+    <h3>Python</h3>
+    <pre>import requests
+
+response = requests.post('${baseUrl}/tools/search_personal_data', 
+    json={'user_id': 'user123', 'query': 'documents'})
+result = response.json()</pre>
+    
+    <h3>curl</h3>
+    <pre>curl -X POST ${baseUrl}/tools/search_personal_data \\
+  -H "Content-Type: application/json" \\
+  -d '{"user_id": "user123", "query": "documents"}'</pre>
+</body>
+</html>`;
+
+    res.setHeader('Content-Type', 'text/html');
+    res.status(200).send(htmlDoc);
+  }
+
   async start(): Promise<void> {
     try {
       const port = process.env.PORT || 3000;
@@ -334,6 +681,9 @@ class HTTPMCPServer {
       this.server = this.app.listen(port, () => {
         logger.info(`HTTP MCP Server listening on port ${port}`);
         console.log(`HTTP MCP Server listening on port ${port}`);
+        console.log(`API Documentation: http://localhost:${port}/`);
+        console.log(`REST API - Tools List: http://localhost:${port}/tools`);
+        console.log(`REST API - Execute Tool: http://localhost:${port}/tools/{tool_name}`);
         console.log(`Health check: http://localhost:${port}/health`);
         console.log(`MCP endpoint (authenticated): http://localhost:${port}/mcp`);
         console.log(`MCP endpoint (public): http://localhost:${port}/mcp-public`);
