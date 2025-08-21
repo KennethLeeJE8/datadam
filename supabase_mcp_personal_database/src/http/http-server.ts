@@ -20,6 +20,8 @@ class HTTPMCPServer {
   private transports: Map<string, StreamableHTTPServerTransport> = new Map();
   private server: any;
   private toolRegistry: ToolRegistry;
+  private mcpServer: PersonalDataMCPServer | null = null;
+  private isInitialized: boolean = false;
 
   constructor() {
     this.app = express();
@@ -104,6 +106,33 @@ class HTTPMCPServer {
     }));
   }
 
+  private async initializeMCPServer(): Promise<void> {
+    if (this.isInitialized && this.mcpServer) {
+      return;
+    }
+
+    try {
+      logger.info('Initializing singleton MCP server...');
+      this.mcpServer = new PersonalDataMCPServer();
+      await this.mcpServer.initializeDatabase();
+      await this.toolRegistry.initialize();
+      this.isInitialized = true;
+      logger.info('MCP server initialization completed successfully');
+    } catch (error) {
+      logger.error('Failed to initialize MCP server', error as Error, ErrorCategory.SYSTEM);
+      this.isInitialized = false;
+      this.mcpServer = null;
+      throw error;
+    }
+  }
+
+  private async getMCPServer(): Promise<PersonalDataMCPServer> {
+    if (!this.isInitialized || !this.mcpServer) {
+      await this.initializeMCPServer();
+    }
+    return this.mcpServer!;
+  }
+
   private setupRoutes(): void {
     // Health check endpoint
     this.app.get('/health', (req, res) => {
@@ -179,7 +208,12 @@ class HTTPMCPServer {
 
     // REST API endpoints for easy AI agent integration
     this.app.get('/tools', this.handleListTools.bind(this));
-    this.app.post('/tools/:toolName', this.handleExecuteTool.bind(this));
+    this.app.post('/tools/:toolName', this.handleExecuteToolMCP.bind(this));
+    
+    // Traditional API endpoints for standard REST clients
+    this.app.get('/api', this.handleListTools.bind(this));
+    this.app.post('/api/:toolName', this.handleExecuteToolAPI.bind(this));
+    
     this.app.get('/', this.handleApiDocumentation.bind(this));
   }
 
@@ -224,9 +258,8 @@ class HTTPMCPServer {
           }
         };
 
-        // Create and connect MCP server
-        const mcpServer = new PersonalDataMCPServer();
-        await mcpServer.initializeDatabase();
+        // Connect singleton MCP server to transport
+        const mcpServer = await this.getMCPServer();
         await mcpServer.getServer().connect(transport);
         await transport.handleRequest(req as any, res, req.body);
         return;
@@ -318,8 +351,8 @@ class HTTPMCPServer {
     });
 
     try {
-      // Initialize tool registry if needed
-      await this.toolRegistry.initialize();
+      // Ensure MCP server is initialized
+      await this.getMCPServer();
       
       const tools = this.toolRegistry.getTools();
       
@@ -353,19 +386,21 @@ class HTTPMCPServer {
     }
   }
 
-  private async handleExecuteTool(req: express.Request, res: express.Response): Promise<void> {
+  private async handleExecuteToolMCP(req: express.Request, res: express.Response): Promise<void> {
     const toolName = req.params.toolName;
     const toolArgs = req.body;
+    const requestId = (req as any).requestId;
     
     logger.info('Received REST API tool execution request', { 
       toolName,
+      args: toolArgs,
       ip: req.ip,
-      requestId: (req as any).requestId
+      requestId
     });
 
     try {
-      // Initialize tool registry if needed
-      await this.toolRegistry.initialize();
+      // Ensure MCP server is initialized
+      const mcpServer = await this.getMCPServer();
       
       // Check if tool exists
       const toolDef = this.toolRegistry.getTool(toolName);
@@ -379,74 +414,171 @@ class HTTPMCPServer {
         return;
       }
       
-      // Execute tool via existing MCP infrastructure
-      // Create a new MCP server instance and transport for this REST request
-      const mcpServer = new PersonalDataMCPServer();
-      await mcpServer.initializeDatabase();
-      
-      // Create a temporary transport and connect the server
-      const transport = new StreamableHTTPServerTransport({
-        sessionIdGenerator: () => randomUUID()
-      });
-      
-      // Connect the server to the transport
-      await mcpServer.getServer().connect(transport);
-      
-      // Now we can use the server's request method
-      let result;
-      try {
-        const toolResponse = await this.executeToolViaMCP(mcpServer, toolName, toolArgs);
-        result = toolResponse;
-      } catch (toolError) {
-        throw new Error(`Tool execution failed: ${(toolError as Error).message}`);
+      // Expect MCP format: { "arguments": { ... } }
+      if (!toolArgs.arguments) {
+        res.status(400).json({
+          error: 'Invalid MCP format',
+          message: 'Expected { "arguments": {...} } format for MCP tool endpoint',
+          timestamp: new Date().toISOString(),
+          requestId: requestId
+        });
+        return;
       }
+      
+      const toolArguments = toolArgs.arguments;
+      logger.debug('Using MCP format arguments', { toolName, requestId });
+      
+      const toolRequest = {
+        method: 'tools/call',
+        params: {
+          name: toolName,
+          arguments: toolArguments
+        }
+      };
+
+      // Use the server's tool execution infrastructure directly
+      const result = await mcpServer.getServer().request(toolRequest, CallToolResultSchema);
+      
+      logger.info('Tool execution completed successfully', { 
+        toolName, 
+        requestId,
+        hasResult: !!result
+      });
       
       res.status(200).json({
         tool: toolName,
         success: true,
         result: result,
-        timestamp: new Date().toISOString()
+        timestamp: new Date().toISOString(),
+        requestId: requestId
       });
     } catch (error) {
-      logger.error('Error executing tool via REST API', error as Error, ErrorCategory.NETWORK, { toolName });
+      const toolError = error as Error;
+      logger.error('Error executing tool via REST API', toolError, ErrorCategory.BUSINESS_LOGIC, { 
+        toolName,
+        requestId,
+        errorType: toolError.constructor.name
+      });
       
-      const errorMessage = (error as Error).message;
-      if (errorMessage.includes('validation') || errorMessage.includes('invalid')) {
+      const errorMessage = toolError.message;
+      
+      // Handle different types of errors appropriately
+      if (errorMessage.includes('validation') || errorMessage.includes('invalid') || errorMessage.includes('required')) {
         res.status(400).json({
-          error: 'Invalid input',
+          error: 'Validation Error',
           message: errorMessage,
           tool_schema: this.toolRegistry.getTool(toolName)?.inputSchema,
-          timestamp: new Date().toISOString()
+          timestamp: new Date().toISOString(),
+          requestId: requestId
+        });
+      } else if (errorMessage.includes('Database error') || errorMessage.includes('connection')) {
+        res.status(503).json({
+          error: 'Service Unavailable',
+          message: 'Database connection issue. Please try again.',
+          timestamp: new Date().toISOString(),
+          requestId: requestId
         });
       } else {
         res.status(500).json({
-          error: 'Internal server error',
-          message: `Failed to execute tool: ${toolName}`,
-          timestamp: new Date().toISOString()
+          error: 'Internal Server Error',
+          message: `Tool execution failed: ${errorMessage}`,
+          timestamp: new Date().toISOString(),
+          requestId: requestId
         });
       }
     }
   }
 
-  private async executeToolViaMCP(mcpServer: PersonalDataMCPServer, toolName: string, toolArgs: any): Promise<any> {
-    // Execute tool using the MCP server's request handler
+  private async handleExecuteToolAPI(req: express.Request, res: express.Response): Promise<void> {
+    const toolName = req.params.toolName;
+    const toolArgs = req.body;
+    const requestId = (req as any).requestId;
+    
+    logger.info('Received traditional API tool execution request', { 
+      toolName,
+      args: toolArgs,
+      ip: req.ip,
+      requestId
+    });
+
     try {
-      // Create a mock request that matches the CallToolRequestSchema
-      const mockRequest = {
+      // Ensure MCP server is initialized
+      const mcpServer = await this.getMCPServer();
+      
+      // Check if tool exists
+      const toolDef = this.toolRegistry.getTool(toolName);
+      if (!toolDef) {
+        res.status(404).json({
+          error: 'Tool not found',
+          message: `Tool '${toolName}' is not available`,
+          available_tools: this.toolRegistry.getTools().map(t => t.name)
+        });
+        return;
+      }
+      
+      // Use direct arguments format for traditional API
+      const toolArguments = toolArgs;
+      logger.debug('Using traditional API format arguments', { toolName, requestId });
+      
+      const toolRequest = {
         method: 'tools/call',
         params: {
           name: toolName,
-          arguments: toolArgs
+          arguments: toolArguments
         }
       };
 
-      // Use the server's internal tool execution logic
-      const result = await mcpServer.getServer().request(mockRequest, CallToolResultSchema);
-      return result;
+      // Use the server's tool execution infrastructure directly
+      const result = await mcpServer.getServer().request(toolRequest, CallToolResultSchema);
+      
+      logger.info('Tool execution completed successfully', { 
+        toolName, 
+        requestId,
+        hasResult: !!result
+      });
+      
+      // Return just the result data for traditional API clients
+      if (result && result.content && result.content[0] && result.content[0].text) {
+        try {
+          const parsedResult = JSON.parse(result.content[0].text);
+          res.status(200).json(parsedResult);
+        } catch (parseError) {
+          res.status(200).json({ data: result.content[0].text });
+        }
+      } else {
+        res.status(200).json({ result: result });
+      }
+      
     } catch (error) {
-      throw new Error(`Tool execution failed: ${error instanceof Error ? error.message : String(error)}`);
+      const toolError = error as Error;
+      logger.error('Error executing tool via traditional API', toolError, ErrorCategory.BUSINESS_LOGIC, { 
+        toolName,
+        requestId,
+        errorType: toolError.constructor.name
+      });
+      
+      const errorMessage = toolError.message;
+      
+      // Return simple error format for traditional API clients
+      if (errorMessage.includes('validation') || errorMessage.includes('invalid') || errorMessage.includes('required')) {
+        res.status(400).json({
+          error: 'Validation Error',
+          message: errorMessage
+        });
+      } else if (errorMessage.includes('Database error') || errorMessage.includes('connection')) {
+        res.status(503).json({
+          error: 'Service Unavailable',
+          message: 'Database connection issue. Please try again.'
+        });
+      } else {
+        res.status(500).json({
+          error: 'Internal Server Error',
+          message: `Tool execution failed: ${errorMessage}`
+        });
+      }
     }
   }
+
 
 
   private async handleApiDocumentation(req: express.Request, res: express.Response): Promise<void> {
@@ -487,10 +619,36 @@ class HTTPMCPServer {
     
     <div class="endpoint">
         <div><span class="method">POST</span> <span class="url">/tools/{tool_name}</span></div>
-        <p>Execute a specific tool with provided arguments.</p>
-        <pre>curl -X POST ${baseUrl}/tools/search_personal_data \\
+        <p><strong>AI Agent/MCP Format:</strong> Execute tools with MCP-style argument wrapping.</p>
+        <pre>curl -X POST ${baseUrl}/tools/create_personal_data \\
   -H "Content-Type: application/json" \\
-  -d '{"user_id": "user123", "query": "contact info"}'</pre>
+  -d '{
+    "arguments": {
+      "user_id": "123e4567-e89b-12d3-a456-426614174000",
+      "data_type": "contact",
+      "title": "John Doe Contact",
+      "content": {"name": "John", "email": "john@example.com"}
+    }
+  }'</pre>
+    </div>
+
+    <div class="endpoint">
+        <div><span class="method">GET</span> <span class="url">/api</span></div>
+        <p>List all available tools (same as /tools).</p>
+        <pre>curl ${baseUrl}/api</pre>
+    </div>
+    
+    <div class="endpoint">
+        <div><span class="method">POST</span> <span class="url">/api/{tool_name}</span></div>
+        <p><strong>Traditional API Format:</strong> Execute tools with direct arguments.</p>
+        <pre>curl -X POST ${baseUrl}/api/create_personal_data \\
+  -H "Content-Type: application/json" \\
+  -d '{
+    "user_id": "123e4567-e89b-12d3-a456-426614174000",
+    "data_type": "contact",
+    "title": "John Doe Contact",
+    "content": {"name": "John", "email": "john@example.com"}
+  }'</pre>
     </div>
     
     <div class="endpoint">
@@ -568,14 +726,23 @@ result = response.json()</pre>
     try {
       const port = process.env.PORT || 3000;
       
+      // Initialize MCP server at startup to avoid cold start delays
+      logger.info('Pre-initializing MCP server...');
+      await this.initializeMCPServer();
+      
       this.server = this.app.listen(port, () => {
         logger.info(`HTTP MCP Server listening on port ${port}`);
         console.log(`HTTP MCP Server listening on port ${port}`);
         console.log(`API Documentation: http://localhost:${port}/`);
-        console.log(`REST API - Tools List: http://localhost:${port}/tools`);
-        console.log(`REST API - Execute Tool: http://localhost:${port}/tools/{tool_name}`);
-        console.log(`Health check: http://localhost:${port}/health`);
-        console.log(`MCP endpoint: http://localhost:${port}/mcp`);
+        console.log(`AI Agent Endpoints:`);
+        console.log(`  Tools List: http://localhost:${port}/tools`);
+        console.log(`  Execute Tool: http://localhost:${port}/tools/{tool_name}`);
+        console.log(`Traditional API Endpoints:`);
+        console.log(`  Tools List: http://localhost:${port}/api`);
+        console.log(`  Execute Tool: http://localhost:${port}/api/{tool_name}`);
+        console.log(`Other Endpoints:`);
+        console.log(`  Health check: http://localhost:${port}/health`);
+        console.log(`  MCP endpoint: http://localhost:${port}/mcp`);
       });
 
       // Graceful shutdown handling

@@ -231,10 +231,25 @@ export function rateLimit(req: Request, res: Response, next: NextFunction): void
 }
 
 /**
- * Request timeout middleware
+ * Request timeout middleware with operation-specific timeouts
  */
 export function requestTimeout(req: Request, res: Response, next: NextFunction): void {
-  const timeoutMs = parseInt(process.env.REQUEST_TIMEOUT || '30000');
+  // Different timeouts for different operations
+  let timeoutMs: number;
+  
+  if (req.path.includes('/tools/') || req.path.includes('/api/')) {
+    // Tool execution - longer timeout
+    timeoutMs = parseInt(process.env.TOOL_TIMEOUT || '45000'); // 45 seconds
+  } else if (req.path === '/health') {
+    // Health checks - short timeout
+    timeoutMs = parseInt(process.env.HEALTH_TIMEOUT || '5000'); // 5 seconds
+  } else if (req.path.includes('/mcp')) {
+    // MCP operations - medium timeout
+    timeoutMs = parseInt(process.env.MCP_TIMEOUT || '30000'); // 30 seconds
+  } else {
+    // General requests - default timeout
+    timeoutMs = parseInt(process.env.REQUEST_TIMEOUT || '15000'); // 15 seconds
+  }
   
   const timeout = setTimeout(() => {
     if (!res.headersSent) {
@@ -242,22 +257,31 @@ export function requestTimeout(req: Request, res: Response, next: NextFunction):
         ip: req.ip,
         url: req.url,
         method: req.method,
-        timeoutMs
+        timeoutMs,
+        userAgent: req.headers['user-agent']
       });
       
       res.status(408).json({
         jsonrpc: '2.0',
         error: {
           code: -32003,
-          message: 'Request timeout'
+          message: `Request timeout after ${timeoutMs}ms`,
+          data: {
+            timeoutMs,
+            endpoint: req.path
+          }
         },
         id: null
       });
     }
   }, timeoutMs);
   
-  // Clear timeout when response is finished
+  // Clear timeout when response is finished or connection closed
   res.on('finish', () => {
+    clearTimeout(timeout);
+  });
+  
+  res.on('close', () => {
     clearTimeout(timeout);
   });
   

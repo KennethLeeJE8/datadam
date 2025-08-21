@@ -1,5 +1,6 @@
 import { createClient } from '@supabase/supabase-js';
 import type { Database } from './types.js';
+import { logger, ErrorCategory } from '../utils/logger.js';
 
 function validateEnvironmentVariables() {
   const missing = [];
@@ -102,51 +103,87 @@ export const supabaseAdmin = new Proxy({} as ReturnType<typeof createSupabaseCli
 // Export supabase as an alias for supabaseAdmin for backward compatibility
 export const supabase = supabaseAdmin;
 
+// Verify database schema based on actual tables from screenshot
+export async function verifyDatabaseSchema(): Promise<void> {
+  // Core tables required for functionality
+  const coreRequiredTables = ['personal_data', 'profiles', 'data_field_definitions'];
+  
+  // Monitoring/logging tables (warn if missing but don't fail)
+  const optionalTables = ['data_access_log', 'error_alerts', 'error_logs', 'error_metrics', 'error_recovery_attempts'];
+  
+  logger.info('Verifying database schema...');
+  
+  // Check core required tables
+  for (const tableName of coreRequiredTables) {
+    try {
+      const { error } = await supabaseAdmin
+        .from(tableName as any)
+        .select('*')
+        .limit(0); // Just check table exists, don't fetch data
+      
+      if (error && error.code === 'PGRST116') {
+        throw new Error(`CRITICAL: Required table '${tableName}' does not exist. Please run the database setup script.`);
+      } else if (error) {
+        throw new Error(`CRITICAL: Error accessing required table '${tableName}': ${error.message}`);
+      }
+      
+      logger.info(`✓ Core table '${tableName}' exists`);
+    } catch (error) {
+      logger.error(`Schema verification failed for core table '${tableName}'`, error as Error, ErrorCategory.DATABASE);
+      throw error;
+    }
+  }
+  
+  // Check optional tables (warn only)
+  for (const tableName of optionalTables) {
+    try {
+      const { error } = await supabaseAdmin
+        .from(tableName as any)
+        .select('*')
+        .limit(0);
+      
+      if (error && error.code === 'PGRST116') {
+        logger.warn(`Optional table '${tableName}' does not exist. Some monitoring features may not work.`, ErrorCategory.DATABASE);
+      } else if (error) {
+        logger.warn(`Error accessing optional table '${tableName}': ${error.message}`, ErrorCategory.DATABASE);
+      } else {
+        logger.debug(`✓ Optional table '${tableName}' exists`);
+      }
+    } catch (error) {
+      logger.warn(`Could not verify optional table '${tableName}': ${(error as Error).message}`, ErrorCategory.DATABASE);
+    }
+  }
+  
+  logger.info('Database schema verification completed');
+}
+
 // Initialize database connection and verify tables exist
 export async function initializeDatabase(): Promise<void> {
   try {
-    console.log('Attempting to initialize database...');
+    logger.info('Starting database initialization...');
     
-    // First test basic connectivity with a simple query
-    const { data: healthCheck, error: healthError } = await supabaseAdmin
+    // Test basic connectivity
+    const { error } = await supabaseAdmin
       .from('personal_data')
-      .select('id')
-      .limit(0); // Just test the connection, don't actually fetch data
-      
-    if (healthError && healthError.code !== 'PGRST116') {
-      // PGRST116 means table doesn't exist, which is different from connection issues
-      console.error('Health check failed:', healthError);
-      // Try auth test as fallback
-      const { data: authTest, error: authError } = await supabaseAdmin.auth.getSession();
-      console.error('Auth test result:', { authError });
+      .select('*')
+      .limit(0);
+    
+    if (error && error.code !== 'PGRST116') {
+      throw new Error(`Database connection failed: ${error.message}`);
     }
-
-    // Test connection with personal_data table
-    const { data, error } = await supabaseAdmin
-      .from('personal_data')
-      .select('id')
-      .limit(1);
-
-    if (error) {
-      console.error('Database connection failed:', error.message);
-      console.error('Full error details:', JSON.stringify(error, null, 2));
-      console.error('Error code:', error.code);
-      console.error('Error hint:', error.hint);
-      console.error('Using SUPABASE_URL:', process.env.SUPABASE_URL);
-      console.error('Using SERVICE_ROLE_KEY prefix:', process.env.SUPABASE_SERVICE_ROLE_KEY?.substring(0, 20) + '...');
-      
-      // Check if the table exists at all
-      if (error.code === 'PGRST116' || error.message.includes('does not exist')) {
-        console.error('The personal_data table does not exist. Database may need to be set up.');
-      }
-      
-      throw new Error(`Database initialization failed: ${error.message}`);
-    }
-
-    console.log('Database connection successful');
-    console.log('Query returned:', data?.length || 0, 'rows');
+    
+    logger.info('Database connection successful');
+    
+    // Verify all required tables exist
+    await verifyDatabaseSchema();
+    
+    logger.info('Database initialization completed successfully');
+    
   } catch (error) {
-    console.error('Failed to initialize database:', error);
+    logger.error('Database initialization failed', error as Error, ErrorCategory.DATABASE, {
+      supabaseUrl: process.env.SUPABASE_URL,
+      hasServiceKey: !!process.env.SUPABASE_SERVICE_ROLE_KEY
+    });
     throw error;
   }
 }

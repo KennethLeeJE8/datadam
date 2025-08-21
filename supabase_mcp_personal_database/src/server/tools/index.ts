@@ -164,9 +164,15 @@ export function setupPersonalDataTools(server: Server): void {
 
 async function handleExtractPersonalData(args: unknown, requestLogger: any) {
   try {
+    const startTime = Date.now();
     const params = ExtractPersonalDataSchema.parse(args);
-    requestLogger.debug('Validation passed for extract_personal_data', {
+    
+    requestLogger.info('Starting extract_personal_data operation', {
       userId: params.user_id,
+      dataTypes: params.data_types,
+      filters: params.filters,
+      limit: params.limit,
+      offset: params.offset
     });
     
     let query = supabaseAdmin
@@ -174,44 +180,77 @@ async function handleExtractPersonalData(args: unknown, requestLogger: any) {
       .select('*')
       .eq('user_id', params.user_id);
 
+    requestLogger.debug('Built base query for personal_data table', {
+      userId: params.user_id
+    });
+
     if (params.data_types && params.data_types.length > 0) {
       query = query.in('data_type', params.data_types);
+      requestLogger.debug('Applied data_type filters', { dataTypes: params.data_types });
     }
 
     if (params.filters) {
       Object.entries(params.filters).forEach(([key, value]) => {
         if (key === 'tags') {
           query = query.contains('tags', [value]);
+          requestLogger.debug('Applied tags filter', { tags: value });
         } else if (key === 'classification') {
           query = query.eq('classification', value);
+          requestLogger.debug('Applied classification filter', { classification: value });
         } else if (key === 'date_from') {
           query = query.gte('created_at', value);
+          requestLogger.debug('Applied date_from filter', { dateFrom: value });
         } else if (key === 'date_to') {
           query = query.lte('created_at', value);
+          requestLogger.debug('Applied date_to filter', { dateTo: value });
         }
       });
     }
 
+    requestLogger.debug('Executing database query', {
+      userId: params.user_id,
+      offset: params.offset,
+      limit: params.limit
+    });
+
+    const queryStartTime = Date.now();
     const { data, error, count } = await query
       .range(params.offset, params.offset + params.limit - 1)
       .order('created_at', { ascending: false });
+
+    const queryDuration = Date.now() - queryStartTime;
 
     if (error) {
       requestLogger.error(
         'Database query failed in extract_personal_data',
         error as Error,
         ErrorCategory.DATABASE,
-        { userId: params.user_id }
+        { 
+          userId: params.user_id,
+          queryDuration,
+          errorCode: error.code,
+          errorHint: error.hint
+        }
       );
       throw new Error(`Database error: ${error.message}`);
     }
 
+    requestLogger.info('Database query completed successfully', {
+      userId: params.user_id,
+      queryDuration,
+      recordCount: data?.length || 0,
+      totalCount: count
+    });
+
     // Log the data access
     await logDataAccess(params.user_id, 'READ', 'personal_data');
     
+    const totalDuration = Date.now() - startTime;
     requestLogger.info('Data extraction completed', {
       userId: params.user_id,
       recordCount: data?.length || 0,
+      totalDuration,
+      queryDuration
     });
 
     return {
@@ -241,38 +280,94 @@ async function handleExtractPersonalData(args: unknown, requestLogger: any) {
 }
 
 async function handleCreatePersonalData(args: unknown, requestLogger: any) {
-  const params = CreatePersonalDataSchema.parse(args);
+  try {
+    const startTime = Date.now();
+    const params = CreatePersonalDataSchema.parse(args);
 
-  const { data, error } = await supabaseAdmin
-    .from('personal_data')
-    .insert({
+    requestLogger.info('Starting create_personal_data operation', {
+      userId: params.user_id,
+      dataType: params.data_type,
+      title: params.title,
+      classification: params.classification,
+      tagsCount: params.tags?.length || 0,
+      contentKeys: Object.keys(params.content || {})
+    });
+
+    const insertData = {
       user_id: params.user_id,
       data_type: params.data_type,
       title: params.title,
       content: params.content,
       tags: params.tags || [],
       classification: params.classification,
-    })
-    .select()
-    .single();
+    };
 
-  if (error) throw new Error(`Database error: ${error.message}`);
+    requestLogger.debug('Executing insert query', {
+      userId: params.user_id,
+      dataType: params.data_type
+    });
 
-  // Log the data creation
-  await logDataAccess(params.user_id, 'CREATE', 'personal_data', data.id, data);
+    const queryStartTime = Date.now();
+    const { data, error } = await supabaseAdmin
+      .from('personal_data')
+      .insert(insertData)
+      .select()
+      .single();
 
-  return {
-    content: [
-      {
-        type: 'text',
-        text: JSON.stringify({
-          success: true,
-          record: data,
-          created_at: new Date().toISOString(),
-        }, null, 2),
-      },
-    ],
-  };
+    const queryDuration = Date.now() - queryStartTime;
+
+    if (error) {
+      requestLogger.error(
+        'Database insert failed in create_personal_data',
+        error as Error,
+        ErrorCategory.DATABASE,
+        { 
+          userId: params.user_id,
+          queryDuration,
+          errorCode: error.code,
+          errorHint: error.hint
+        }
+      );
+      throw new Error(`Database error: ${error.message}`);
+    }
+
+    requestLogger.info('Database insert completed successfully', {
+      userId: params.user_id,
+      recordId: data.id,
+      queryDuration
+    });
+
+    // Log the data creation
+    await logDataAccess(params.user_id, 'CREATE', 'personal_data', data.id, data);
+
+    const totalDuration = Date.now() - startTime;
+    requestLogger.info('Data creation completed', {
+      userId: params.user_id,
+      recordId: data.id,
+      totalDuration,
+      queryDuration
+    });
+
+    return {
+      content: [
+        {
+          type: 'text',
+          text: JSON.stringify({
+            success: true,
+            record: data,
+            created_at: new Date().toISOString(),
+          }, null, 2),
+        },
+      ],
+    };
+  } catch (validationError) {
+    requestLogger.error(
+      'Validation failed for create_personal_data',
+      validationError as Error,
+      ErrorCategory.VALIDATION
+    );
+    throw validationError;
+  }
 }
 
 async function handleUpdatePersonalData(args: unknown, requestLogger: any) {
