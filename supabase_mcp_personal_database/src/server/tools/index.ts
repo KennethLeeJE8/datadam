@@ -50,6 +50,74 @@ const AddPersonalDataFieldSchema = z.object({
   default_value: z.unknown().optional(),
 });
 
+// Export function for direct tool execution from REST API
+export async function executePersonalDataTool(toolName: string, toolArgs: any): Promise<any> {
+  const requestId = `req_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+  const sessionId = 'rest-api';
+  const requestLogger = createRequestLogger(requestId, sessionId);
+  
+  requestLogger.info(`Direct tool request started: ${toolName}`, {
+    toolName: toolName,
+    operation: 'direct_tool_call',
+  });
+
+  try {
+    let result;
+    const startTime = Date.now();
+
+    switch (toolName) {
+      case 'extract_personal_data':
+        result = await handleExtractPersonalData(toolArgs, requestLogger);
+        break;
+
+      case 'create_personal_data':
+        result = await handleCreatePersonalData(toolArgs, requestLogger);
+        break;
+
+      case 'update_personal_data':
+        result = await handleUpdatePersonalData(toolArgs, requestLogger);
+        break;
+
+      case 'delete_personal_data':
+        result = await handleDeletePersonalData(toolArgs, requestLogger);
+        break;
+
+      case 'search_personal_data':
+        result = await handleSearchPersonalData(toolArgs, requestLogger);
+        break;
+
+      case 'add_personal_data_field':
+        result = await handleAddPersonalDataField(toolArgs, requestLogger);
+        break;
+
+      default:
+        throw new Error(`Unknown tool: ${toolName}`);
+    }
+
+    const duration = Date.now() - startTime;
+    requestLogger.info(`Direct tool request completed: ${toolName}`, {
+      toolName: toolName,
+      operation: 'direct_tool_call',
+      duration,
+    });
+
+    return result;
+  } catch (error) {
+    const toolError = error as Error;
+    requestLogger.error(
+      `Direct tool request failed: ${toolName}`,
+      toolError,
+      ErrorCategory.BUSINESS_LOGIC,
+      {
+        toolName: toolName,
+        operation: 'direct_tool_call',
+      }
+    );
+
+    throw error;
+  }
+}
+
 export function setupPersonalDataTools(server: Server): void {
   server.setRequestHandler(CallToolRequestSchema, async (request) => {
     const { name, arguments: args } = request.params;

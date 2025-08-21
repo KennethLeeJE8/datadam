@@ -13,6 +13,9 @@ import { errorMonitoring } from '../utils/monitoring.js';
 import { rateLimit, requestTimeout, connectionLimit } from './auth-middleware.js';
 import { ToolRegistry } from './tool-registry.js';
 
+// Import the tool handlers directly
+import { executePersonalDataTool } from '../server/tools/index.js';
+
 dotenv.config();
 
 class HTTPMCPServer {
@@ -428,16 +431,8 @@ class HTTPMCPServer {
       const toolArguments = toolArgs.arguments;
       logger.debug('Using MCP format arguments', { toolName, requestId });
       
-      const toolRequest = {
-        method: 'tools/call',
-        params: {
-          name: toolName,
-          arguments: toolArguments
-        }
-      };
-
-      // Use the server's tool execution infrastructure directly
-      const result = await mcpServer.getServer().request(toolRequest, CallToolResultSchema);
+      // Execute tool directly using exported function
+      const result = await executePersonalDataTool(toolName, toolArguments);
       
       logger.info('Tool execution completed successfully', { 
         toolName, 
@@ -520,16 +515,8 @@ class HTTPMCPServer {
       const toolArguments = toolArgs;
       logger.debug('Using traditional API format arguments', { toolName, requestId });
       
-      const toolRequest = {
-        method: 'tools/call',
-        params: {
-          name: toolName,
-          arguments: toolArguments
-        }
-      };
-
-      // Use the server's tool execution infrastructure directly
-      const result = await mcpServer.getServer().request(toolRequest, CallToolResultSchema);
+      // Execute tool directly using exported function
+      const result = await executePersonalDataTool(toolName, toolArguments);
       
       logger.info('Tool execution completed successfully', { 
         toolName, 
