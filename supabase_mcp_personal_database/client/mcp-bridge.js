@@ -34,7 +34,7 @@ class MCPBridge {
     // Setup readline interface for stdin/stdout
     this.rl = readline.createInterface({
       input: process.stdin,
-      output: process.stdout,
+      output: process.stderr, // Use stderr for logging to avoid interfering with stdout
       terminal: false
     });
     
@@ -47,7 +47,7 @@ class MCPBridge {
 
   log(message, data = {}) {
     if (this.debug) {
-      console.error(`[MCP-Bridge] ${message}`, JSON.stringify(data, null, 2));
+      process.stderr.write(`[MCP-Bridge] ${message} ${JSON.stringify(data)}\n`);
     }
   }
 
@@ -60,22 +60,68 @@ class MCPBridge {
         
         const response = await this.handleRequest(request);
         
-        this.log('Sending response to Claude Desktop', { response });
-        console.log(JSON.stringify(response));
+        // Only send response if it's not null (notifications don't need responses)
+        if (response !== null) {
+          // Validate response structure - must have jsonrpc and either result OR error
+          if (!response.jsonrpc || response.jsonrpc !== '2.0') {
+            process.stderr.write(`[ERROR] Invalid jsonrpc version: ${JSON.stringify(response)}\n`);
+            return;
+          }
+          
+          if (!response.hasOwnProperty('result') && !response.hasOwnProperty('error')) {
+            process.stderr.write(`[ERROR] Response missing result or error: ${JSON.stringify(response)}\n`);
+            return;
+          }
+          
+          // Ensure id field is present (required for all responses except notifications)
+          if (!response.hasOwnProperty('id')) {
+            process.stderr.write(`[ERROR] Response missing id field: ${JSON.stringify(response)}\n`);
+            return;
+          }
+          
+          this.log('Sending response to Claude Desktop', { response });
+          
+          // Send response to Claude Desktop via stdout
+          const responseStr = JSON.stringify(response);
+          process.stdout.write(responseStr + '\n');
+          
+          // Ensure it's flushed immediately
+          if (process.stdout.cork) {
+            process.stdout.uncork();
+          }
+        } else {
+          this.log('Notification processed, no response needed');
+        }
       } catch (error) {
-        this.log('Error processing request', { error: error.message });
+        process.stderr.write(`[ERROR] Request failed: ${error.message}\n`);
         
-        // Send error response back to Claude Desktop
+        // Try to extract request ID for error response
+        let requestId = null;
+        try {
+          const request = JSON.parse(line.trim());
+          requestId = request.id || null;
+        } catch (parseError) {
+          // If we can't parse the request, use null ID
+          requestId = null;
+        }
+        
+        // Send error response back to Claude Desktop  
         const errorResponse = {
           jsonrpc: '2.0',
           error: {
-            code: -32603,
-            message: 'Internal error',
+            code: -32700,
+            message: 'Parse error',
             data: error.message
           },
-          id: null
+          id: requestId
         };
-        console.log(JSON.stringify(errorResponse));
+        const errorStr = JSON.stringify(errorResponse);
+        process.stdout.write(errorStr + '\n');
+        
+        // Ensure it's flushed immediately
+        if (process.stdout.cork) {
+          process.stdout.uncork();
+        }
       }
     });
 
@@ -102,12 +148,51 @@ class MCPBridge {
           return await this.handleInitialize(request);
         
         case 'tools/list':
+          return await this.handleListTools(id);
+        
         case 'tools/call':
+          return await this.handleCallTool(params, id);
+        
         case 'resources/list':
+          return {
+            jsonrpc: '2.0',
+            result: {
+              resources: []
+            },
+            id
+          };
+        
         case 'resources/read':
+          return {
+            jsonrpc: '2.0',
+            result: {
+              contents: []
+            },
+            id
+          };
+        
         case 'prompts/list':
+          return {
+            jsonrpc: '2.0',
+            result: {
+              prompts: []
+            },
+            id
+          };
+        
         case 'prompts/get':
-          return await this.forwardToHTTPServer(request);
+          return {
+            jsonrpc: '2.0',
+            result: {
+              description: '',
+              messages: []
+            },
+            id
+          };
+        
+        case 'notifications/initialized':
+          // Notification - no response needed
+          return null;
         
         default:
           return {
@@ -116,11 +201,11 @@ class MCPBridge {
               code: -32601,
               message: `Method not found: ${method}`
             },
-            id
+            id: id || null
           };
       }
     } catch (error) {
-      this.log('Error in handleRequest', { error: error.message, method });
+      process.stderr.write(`[ERROR] ${method} failed: ${error.message}\n`);
       return {
         jsonrpc: '2.0',
         error: {
@@ -128,23 +213,25 @@ class MCPBridge {
           message: 'Internal error',
           data: error.message
         },
-        id
+        id: id || null
       };
     }
   }
 
   async handleInitialize(request) {
     try {
-      // Forward initialization to HTTP server
-      const response = await this.forwardToHTTPServer(request);
+      this.log('Handling initialize request', { requestId: request.id });
       
-      if (response.error) {
-        throw new Error(response.error.message);
+      // Test connection to HTTP server by checking health endpoint
+      const healthResponse = await this.makeRestRequest('GET', '/health');
+      
+      if (healthResponse.status !== 'healthy') {
+        throw new Error('Server health check failed');
       }
       
-      this.log('Initialization successful', { response });
+      this.log('Server health check passed', { healthResponse });
       
-      return {
+      const response = {
         jsonrpc: '2.0',
         result: {
           protocolVersion: '2025-06-18',
@@ -160,46 +247,134 @@ class MCPBridge {
         },
         id: request.id
       };
+      
+      this.log('Initialize response prepared', { response });
+      return response;
     } catch (error) {
-      this.log('Initialization failed', { error: error.message });
-      return {
+      process.stderr.write(`[ERROR] Init failed: ${error.message}\n`);
+      const errorResponse = {
         jsonrpc: '2.0',
         error: {
           code: -32602,
           message: 'Initialization failed',
           data: error.message
         },
-        id: request.id
+        id: request.id || null
+      };
+      this.log('Initialize error response prepared', { errorResponse });
+      return errorResponse;
+    }
+  }
+
+  async handleListTools(id) {
+    try {
+      // Use the /tools endpoint to get the list
+      const toolsData = await this.makeRestRequest('GET', '/tools');
+      
+      this.log('Retrieved tools list', { toolsCount: toolsData.tools?.length });
+      
+      // Clean up tools to only include MCP-expected fields
+      const cleanedTools = (toolsData.tools || []).map(tool => ({
+        name: tool.name,
+        description: tool.description,
+        inputSchema: tool.inputSchema
+      }));
+      
+      return {
+        jsonrpc: '2.0',
+        result: {
+          tools: cleanedTools
+        },
+        id
+      };
+    } catch (error) {
+      this.log('Error listing tools', { error: error.message });
+      return {
+        jsonrpc: '2.0',
+        error: {
+          code: -32603,
+          message: 'Failed to list tools',
+          data: error.message
+        },
+        id
       };
     }
   }
 
-  async forwardToHTTPServer(request) {
+  async handleCallTool(params, id) {
+    try {
+      const { name, arguments: args } = params;
+      
+      this.log('Calling tool', { toolName: name, args });
+      
+      // Use the /tools/{toolName} endpoint with MCP format
+      const result = await this.makeRestRequest('POST', `/tools/${name}`, {
+        arguments: args
+      });
+      
+      this.log('Tool call completed', { toolName: name, result: !!result });
+      
+      // Extract the actual result content from our server response
+      let toolResult;
+      if (result.result && result.result.content) {
+        // Server returned MCP-style result
+        toolResult = result.result.content;
+      } else if (result.content) {
+        // Direct content
+        toolResult = result.content;
+      } else {
+        // Fallback to the whole result
+        toolResult = [{
+          type: 'text',
+          text: JSON.stringify(result, null, 2)
+        }];
+      }
+      
+      return {
+        jsonrpc: '2.0',
+        result: {
+          content: toolResult
+        },
+        id: id || null
+      };
+    } catch (error) {
+      process.stderr.write(`[ERROR] Tool ${params.name} failed: ${error.message}\n`);
+      return {
+        jsonrpc: '2.0',
+        error: {
+          code: -32603,
+          message: 'Tool execution failed',
+          data: error.message
+        },
+        id: id || null
+      };
+    }
+  }
+
+  async makeRestRequest(method, path, body = null) {
     return new Promise((resolve, reject) => {
-      const url = new URL('/mcp-public', this.serverUrl);
+      const url = new URL(path, this.serverUrl);
       const isHttps = url.protocol === 'https:';
       const httpModule = isHttps ? https : http;
-      
-      const postData = JSON.stringify(request);
       
       const options = {
         hostname: url.hostname,
         port: url.port || (isHttps ? 443 : 80),
         path: url.pathname,
-        method: 'POST',
+        method: method,
         headers: {
           'Content-Type': 'application/json',
-          'Content-Length': Buffer.byteLength(postData),
           'User-Agent': 'MCP-Bridge/1.0.0'
         }
       };
 
-      // Add session ID header if we have one
-      if (this.sessionId) {
-        options.headers['mcp-session-id'] = this.sessionId;
+      let postData = '';
+      if (body) {
+        postData = JSON.stringify(body);
+        options.headers['Content-Length'] = Buffer.byteLength(postData);
       }
 
-      this.log('Forwarding request to HTTP server', { url: url.toString(), options: { ...options, headers: options.headers } });
+      this.log('Making REST request', { method, path, body });
 
       const req = httpModule.request(options, (res) => {
         let data = '';
@@ -210,38 +385,38 @@ class MCPBridge {
         
         res.on('end', () => {
           try {
-            // Extract session ID from response headers
-            const sessionId = res.headers['mcp-session-id'];
-            if (sessionId && !this.sessionId) {
-              this.sessionId = sessionId;
-              this.log('Session ID established', { sessionId });
-            }
-            
             const response = JSON.parse(data);
-            this.log('Received response from HTTP server', { response });
-            resolve(response);
+            this.log('Received REST response', { response });
+            
+            if (res.statusCode >= 400) {
+              reject(new Error(response.message || `HTTP ${res.statusCode}`));
+            } else {
+              resolve(response);
+            }
           } catch (error) {
-            this.log('Error parsing HTTP response', { error: error.message, data });
+            this.log('Error parsing REST response', { error: error.message, data });
             reject(new Error(`Invalid JSON response: ${error.message}`));
           }
         });
       });
 
       req.on('error', (error) => {
-        this.log('HTTP request error', { error: error.message });
-        reject(new Error(`HTTP request failed: ${error.message}`));
+        process.stderr.write(`[ERROR] REST ${method} ${path} failed: ${error.message}\n`);
+        reject(new Error(`REST request failed: ${error.message}`));
       });
 
       req.on('timeout', () => {
-        this.log('HTTP request timeout');
+        process.stderr.write(`[ERROR] REST ${method} ${path} timeout\n`);
         req.destroy();
-        reject(new Error('HTTP request timeout'));
+        reject(new Error('REST request timeout'));
       });
 
-      // Set timeout (30 seconds)
-      req.setTimeout(30000);
+      // Set timeout (45 seconds for tool calls)
+      req.setTimeout(45000);
 
-      req.write(postData);
+      if (postData) {
+        req.write(postData);
+      }
       req.end();
     });
   }
@@ -266,8 +441,8 @@ function main() {
   const args = process.argv.slice(2);
   
   if (args.length < 1) {
-    console.error('Usage: node mcp-bridge.js <server-url>');
-    console.error('Example: node mcp-bridge.js https://datadam-mcp.onrender.com');
+    process.stderr.write('Usage: node mcp-bridge.js <server-url>\n');
+    process.stderr.write('Example: node mcp-bridge.js https://datadam-mcp.onrender.com\n');
     process.exit(1);
   }
   
@@ -277,7 +452,7 @@ function main() {
   try {
     new URL(serverUrl);
   } catch (error) {
-    console.error(`Invalid server URL: ${serverUrl}`);
+    process.stderr.write(`Invalid server URL: ${serverUrl}\n`);
     process.exit(1);
   }
   
@@ -287,13 +462,13 @@ function main() {
 
 // Handle unhandled promise rejections
 process.on('unhandledRejection', (reason, promise) => {
-  console.error('Unhandled Rejection at:', promise, 'reason:', reason);
+  process.stderr.write(`Unhandled Rejection at: ${promise} reason: ${reason}\n`);
   process.exit(1);
 });
 
 // Handle uncaught exceptions
 process.on('uncaughtException', (error) => {
-  console.error('Uncaught Exception:', error);
+  process.stderr.write(`Uncaught Exception: ${error}\n`);
   process.exit(1);
 });
 

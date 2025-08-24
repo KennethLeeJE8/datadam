@@ -52,6 +52,7 @@ export interface Database {
           created_at: string
           updated_at: string
           last_accessed: string
+          category: string | null
         }
         Insert: {
           id?: string
@@ -66,6 +67,7 @@ export interface Database {
           created_at?: string
           updated_at?: string
           last_accessed?: string
+          category?: string | null
         }
         Update: {
           id?: string
@@ -80,6 +82,7 @@ export interface Database {
           created_at?: string
           updated_at?: string
           last_accessed?: string
+          category?: string | null
         }
       }
       data_field_definitions: {
@@ -295,6 +298,56 @@ export interface Database {
           created_at?: string
         }
       }
+      category_registry: {
+        Row: {
+          id: string
+          category_name: string
+          display_name: string
+          description: string | null
+          is_active: boolean
+          item_count: number
+          first_activation: string | null
+          last_modified: string
+          trigger_words: string[]
+          query_hint: string | null
+          example_queries: string[]
+          min_items_for_activation: number
+          metadata: Json
+          created_at: string
+        }
+        Insert: {
+          id?: string
+          category_name: string
+          display_name: string
+          description?: string | null
+          is_active?: boolean
+          item_count?: number
+          first_activation?: string | null
+          last_modified?: string
+          trigger_words?: string[]
+          query_hint?: string | null
+          example_queries?: string[]
+          min_items_for_activation?: number
+          metadata?: Json
+          created_at?: string
+        }
+        Update: {
+          id?: string
+          category_name?: string
+          display_name?: string
+          description?: string | null
+          is_active?: boolean
+          item_count?: number
+          first_activation?: string | null
+          last_modified?: string
+          trigger_words?: string[]
+          query_hint?: string | null
+          example_queries?: string[]
+          min_items_for_activation?: number
+          metadata?: Json
+          created_at?: string
+        }
+      }
     }
     Views: {
       [_ in never]: never
@@ -400,6 +453,28 @@ export interface Database {
         Returns: {
           deleted_count: number
         }
+      }
+      get_active_categories: {
+        Args: Record<string, never>
+        Returns: {
+          category_name: string
+          display_name: string
+          description: string
+          item_count: number
+          trigger_words: string[]
+          query_hint: string
+          example_queries: string[]
+          last_modified: string
+        }[]
+      }
+      get_category_stats: {
+        Args: Record<string, never>
+        Returns: {
+          total_categories: number
+          active_categories: number
+          total_items: number
+          categories_json: Json
+        }[]
       }
     }
     Enums: {

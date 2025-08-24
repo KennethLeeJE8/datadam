@@ -6,6 +6,7 @@ import { supabaseAdmin } from '../../database/client.js';
 import { logDataAccess } from '../../security/audit.js';
 import { createRequestLogger, ErrorCategory } from '../../utils/logger.js';
 import { errorRecovery } from '../../utils/errorRecovery.js';
+import { CategoryManager } from '../../services/CategoryManager.js';
 
 // Input validation schemas
 const ExtractPersonalDataSchema = z.object({
@@ -361,6 +362,22 @@ async function handleCreatePersonalData(args: unknown, requestLogger: any) {
       contentKeys: Object.keys(params.content || {})
     });
 
+    // Initialize category manager for category detection
+    const categoryManager = new CategoryManager(supabaseAdmin);
+    
+    // Detect appropriate category for this data
+    const detectedCategory = await categoryManager.detectCategoryFromContent(
+      params.data_type,
+      params.title,
+      params.content
+    );
+
+    requestLogger.debug('Category detected', {
+      dataType: params.data_type,
+      detectedCategory,
+      title: params.title
+    });
+
     const insertData = {
       user_id: params.user_id,
       data_type: params.data_type,
@@ -368,11 +385,13 @@ async function handleCreatePersonalData(args: unknown, requestLogger: any) {
       content: params.content,
       tags: params.tags || [],
       classification: params.classification,
+      category: detectedCategory, // Add detected category
     };
 
     requestLogger.debug('Executing insert query', {
       userId: params.user_id,
-      dataType: params.data_type
+      dataType: params.data_type,
+      category: detectedCategory
     });
 
     const queryStartTime = Date.now();
@@ -402,8 +421,13 @@ async function handleCreatePersonalData(args: unknown, requestLogger: any) {
     requestLogger.info('Database insert completed successfully', {
       userId: params.user_id,
       recordId: data.id,
-      queryDuration
+      queryDuration,
+      category: detectedCategory
     });
+
+    // Check if this data creation activated a new category
+    const categoryInfo = await categoryManager.getCategoryStatus(detectedCategory || '');
+    const wasJustActivated = categoryInfo?.isActive && categoryInfo?.itemCount === 1;
 
     // Log the data creation
     await logDataAccess(params.user_id, 'CREATE', 'personal_data', data.id, data);
@@ -413,18 +437,31 @@ async function handleCreatePersonalData(args: unknown, requestLogger: any) {
       userId: params.user_id,
       recordId: data.id,
       totalDuration,
-      queryDuration
+      queryDuration,
+      categoryActivated: wasJustActivated
     });
+
+    const responseData: any = {
+      success: true,
+      record: data,
+      category_info: {
+        assigned_category: detectedCategory,
+        category_activated: wasJustActivated,
+        category_display_name: categoryInfo?.displayName
+      },
+      created_at: new Date().toISOString(),
+    };
+
+    // Add activation message if category was just activated
+    if (wasJustActivated && categoryInfo) {
+      responseData.category_info.message = `Great! You've activated the '${categoryInfo.displayName}' category. I can now help you with queries about: ${categoryInfo.triggerWords.slice(0, 3).join(', ')}`;
+    }
 
     return {
       content: [
         {
           type: 'text',
-          text: JSON.stringify({
-            success: true,
-            record: data,
-            created_at: new Date().toISOString(),
-          }, null, 2),
+          text: JSON.stringify(responseData, null, 2),
         },
       ],
     };
