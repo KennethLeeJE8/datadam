@@ -556,12 +556,85 @@ class HTTPMCPServer {
             },
             required: ['user_id', 'query'],
           },
+        },
+        {
+          name: 'update_personal_data',
+          description: activeCategories.length > 0
+            ? `Update existing personal data records. ${dataSummary}. ${triggerHints}`
+            : 'Update personal data records. No data available yet.',
+          inputSchema: {
+            type: 'object',
+            properties: {
+              record_id: {
+                type: 'string',
+                description: 'Record identifier to update',
+              },
+              updates: {
+                type: 'object',
+                description: 'Fields to update',
+              },
+            },
+            required: ['record_id', 'updates'],
+          },
+        },
+        {
+          name: 'delete_personal_data',
+          description: activeCategories.length > 0
+            ? `Delete personal data records. ${dataSummary}. Use with caution - supports both soft and hard deletion for GDPR compliance.`
+            : 'Delete personal data records. No data available yet.',
+          inputSchema: {
+            type: 'object',
+            properties: {
+              record_ids: {
+                type: 'array',
+                items: { type: 'string' },
+                description: 'Record identifiers to delete',
+              },
+              hard_delete: {
+                type: 'boolean',
+                default: false,
+                description: 'Permanent deletion for GDPR compliance',
+              },
+            },
+            required: ['record_ids'],
+          },
+        },
+        {
+          name: 'add_personal_data_field',
+          description: 'Add a new personal data field type definition to extend the data schema dynamically.',
+          inputSchema: {
+            type: 'object',
+            properties: {
+              field_name: {
+                type: 'string',
+                description: 'Unique field identifier',
+              },
+              data_type: {
+                type: 'string',
+                enum: ['string', 'number', 'date', 'json', 'encrypted'],
+                description: 'Field data type',
+              },
+              validation_rules: {
+                type: 'object',
+                description: 'JSON schema validation rules',
+              },
+              is_required: {
+                type: 'boolean',
+                default: false,
+                description: 'Whether field is mandatory',
+              },
+              default_value: {
+                description: 'Default value for the field',
+              },
+            },
+            required: ['field_name', 'data_type'],
+          },
         }
       ];
     } catch (error) {
       logger.error('Error generating dynamic tools', error as Error, ErrorCategory.SYSTEM);
       // Fallback to static tools
-      return this.toolRegistry.getTools().slice(0, 3); // Return main tools only
+      return this.toolRegistry.getTools(); // Return all static tools as fallback
     }
   }
 
