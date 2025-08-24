@@ -154,22 +154,10 @@ class MCPBridge {
           return await this.handleCallTool(params, id);
         
         case 'resources/list':
-          return {
-            jsonrpc: '2.0',
-            result: {
-              resources: []
-            },
-            id
-          };
+          return await this.handleListResources(id);
         
         case 'resources/read':
-          return {
-            jsonrpc: '2.0',
-            result: {
-              contents: []
-            },
-            id
-          };
+          return await this.handleReadResource(params, id);
         
         case 'prompts/list':
           return {
@@ -234,7 +222,7 @@ class MCPBridge {
       const response = {
         jsonrpc: '2.0',
         result: {
-          protocolVersion: '2025-06-18',
+          protocolVersion: '2024-11-05',
           capabilities: {
             tools: {},
             resources: {},
@@ -242,7 +230,7 @@ class MCPBridge {
           },
           serverInfo: {
             name: 'personal-data-bridge',
-            version: '1.0.0'
+            version: '2.0.0'
           }
         },
         id: request.id
@@ -268,10 +256,14 @@ class MCPBridge {
 
   async handleListTools(id) {
     try {
-      // Use the /tools endpoint to get the list
+      // Use the /tools endpoint (not /api) to get DYNAMIC category-aware tools
       const toolsData = await this.makeRestRequest('GET', '/tools');
       
-      this.log('Retrieved tools list', { toolsCount: toolsData.tools?.length });
+      this.log('Retrieved dynamic tools list', { 
+        toolsCount: toolsData.tools?.length,
+        version: toolsData.server_info?.version,
+        features: toolsData.dynamic_features
+      });
       
       // Clean up tools to only include MCP-expected fields
       const cleanedTools = (toolsData.tools || []).map(tool => ({
@@ -421,6 +413,148 @@ class MCPBridge {
     });
   }
 
+  async handleListResources(id) {
+    try {
+      // Forward to MCP endpoint for resources
+      const mcpResponse = await this.makeMCPRequest('resources/list', {});
+      
+      this.log('Retrieved resources list', { 
+        resourcesCount: mcpResponse.result?.resources?.length 
+      });
+      
+      return {
+        jsonrpc: '2.0',
+        result: {
+          resources: mcpResponse.result?.resources || []
+        },
+        id
+      };
+    } catch (error) {
+      this.log('Error listing resources', { error: error.message });
+      return {
+        jsonrpc: '2.0',
+        error: {
+          code: -32603,
+          message: 'Failed to list resources',
+          data: error.message
+        },
+        id
+      };
+    }
+  }
+
+  async handleReadResource(params, id) {
+    try {
+      // Forward to MCP endpoint for resource reading
+      const mcpResponse = await this.makeMCPRequest('resources/read', params);
+      
+      this.log('Read resource', { 
+        uri: params?.uri,
+        contentsCount: mcpResponse.result?.contents?.length 
+      });
+      
+      return {
+        jsonrpc: '2.0',
+        result: {
+          contents: mcpResponse.result?.contents || []
+        },
+        id
+      };
+    } catch (error) {
+      this.log('Error reading resource', { error: error.message, uri: params?.uri });
+      return {
+        jsonrpc: '2.0',
+        error: {
+          code: -32603,
+          message: 'Failed to read resource',
+          data: error.message
+        },
+        id
+      };
+    }
+  }
+
+  async makeMCPRequest(method, params = {}) {
+    return new Promise((resolve, reject) => {
+      const url = new URL('/mcp', this.serverUrl);
+      const isHttps = url.protocol === 'https:';
+      const httpModule = isHttps ? https : http;
+      
+      const requestBody = {
+        jsonrpc: '2.0',
+        method: method,
+        params: params,
+        id: this.requestIdCounter++
+      };
+      
+      const postData = JSON.stringify(requestBody);
+      
+      const options = {
+        hostname: url.hostname,
+        port: url.port || (isHttps ? 443 : 80),
+        path: url.pathname,
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Accept': 'application/json, text/event-stream',
+          'User-Agent': 'MCP-Bridge/2.0.0',
+          'Content-Length': Buffer.byteLength(postData)
+        }
+      };
+
+      this.log('Making MCP request', { method, params });
+
+      const req = httpModule.request(options, (res) => {
+        let data = '';
+        
+        res.on('data', (chunk) => {
+          data += chunk;
+        });
+        
+        res.on('end', () => {
+          try {
+            // Handle SSE format if present
+            let responseData = data;
+            if (data.startsWith('event:')) {
+              const lines = data.split('\n');
+              const dataLine = lines.find(line => line.startsWith('data:'));
+              if (dataLine) {
+                responseData = dataLine.substring(5).trim();
+              }
+            }
+            
+            const response = JSON.parse(responseData);
+            this.log('Received MCP response', { response });
+            
+            if (res.statusCode >= 400 || response.error) {
+              reject(new Error(response.error?.message || `HTTP ${res.statusCode}`));
+            } else {
+              resolve(response);
+            }
+          } catch (error) {
+            this.log('Error parsing MCP response', { error: error.message, data });
+            reject(new Error(`Invalid JSON response: ${error.message}`));
+          }
+        });
+      });
+
+      req.on('error', (error) => {
+        process.stderr.write(`[ERROR] MCP ${method} failed: ${error.message}\n`);
+        reject(new Error(`MCP request failed: ${error.message}`));
+      });
+
+      req.on('timeout', () => {
+        process.stderr.write(`[ERROR] MCP ${method} timeout\n`);
+        req.destroy();
+        reject(new Error('MCP request timeout'));
+      });
+
+      req.setTimeout(30000); // 30 second timeout
+      req.write(postData);
+      req.end();
+    });
+  }
+
   cleanup() {
     this.log('Cleaning up bridge client...');
     
@@ -431,7 +565,7 @@ class MCPBridge {
     // TODO: Send session termination request to HTTP server if needed
     if (this.sessionId) {
       this.log('Terminating session', { sessionId: this.sessionId });
-      // Could send DELETE request to /mcp-public with session ID
+      // Could send DELETE request to /mcp with session ID
     }
   }
 }

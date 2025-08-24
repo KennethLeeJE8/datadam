@@ -350,35 +350,70 @@ class HTTPMCPServer {
   private async handleListTools(req: express.Request, res: express.Response): Promise<void> {
     logger.info('Received REST API request for tools list', { 
       ip: req.ip,
-      requestId: (req as any).requestId
+      requestId: (req as any).requestId,
+      endpoint: req.path
     });
 
     try {
-      // Ensure MCP server is initialized
-      await this.getMCPServer();
+      // Determine which tools to return based on endpoint
+      const isApiEndpoint = req.path.startsWith('/api');
       
-      const tools = this.toolRegistry.getTools();
-      
-      res.status(200).json({
-        tools: tools,
-        server_info: {
-          name: 'personal-data-server',
-          version: '1.0.0',
-          capabilities: ['tools', 'resources', 'prompts']
-        },
-        endpoints: {
-          list_tools: 'GET /tools',
-          execute_tool: 'POST /tools/{tool_name}',
-          mcp_endpoint: 'POST /mcp-public',
-          documentation: 'GET /',
-          health: 'GET /health'
-        },
-        usage_examples: {
-          list_tools: `curl ${req.protocol}://${req.get('host')}/tools`,
-          execute_tool: `curl -X POST ${req.protocol}://${req.get('host')}/tools/search_personal_data -H "Content-Type: application/json" -d '{"user_id": "user123", "query": "example"}'`
-        },
-        timestamp: new Date().toISOString()
-      });
+      if (isApiEndpoint) {
+        // Traditional API: Return static tools from ToolRegistry
+        await this.getMCPServer(); // Ensure initialized
+        const tools = this.toolRegistry.getTools();
+        
+        res.status(200).json({
+          tools: tools,
+          server_info: {
+            name: 'personal-data-server',
+            version: '1.0.0',
+            capabilities: ['tools', 'resources', 'prompts']
+          },
+          endpoints: {
+            list_tools: 'GET /tools',
+            execute_tool: 'POST /tools/{tool_name}',
+            mcp_endpoint: 'POST /mcp',
+            documentation: 'GET /',
+            health: 'GET /health'
+          },
+          usage_examples: {
+            list_tools: `curl ${req.protocol}://${req.get('host')}/tools`,
+            execute_tool: `curl -X POST ${req.protocol}://${req.get('host')}/tools/search_personal_data -H "Content-Type: application/json" -d '{"user_id": "user123", "query": "example"}'`
+          },
+          timestamp: new Date().toISOString()
+        });
+      } else {
+        // AI Agent/MCP endpoint: Return dynamic tools 
+        const dynamicTools = await this.getDynamicTools();
+        
+        res.status(200).json({
+          tools: dynamicTools,
+          server_info: {
+            name: 'personal-data-server',
+            version: '2.0.0', // Updated version for dynamic features
+            capabilities: ['tools', 'resources', 'prompts'],
+            features: ['dynamic_categories', 'contextual_hints', 'trigger_words']
+          },
+          endpoints: {
+            list_tools: 'GET /tools',
+            execute_tool: 'POST /tools/{tool_name}',
+            mcp_endpoint: 'POST /mcp',
+            documentation: 'GET /',
+            health: 'GET /health'
+          },
+          usage_examples: {
+            list_tools: `curl ${req.protocol}://${req.get('host')}/tools`,
+            execute_tool: `curl -X POST ${req.protocol}://${req.get('host')}/tools/search_personal_data -H "Content-Type: application/json" -d '{"user_id": "user123", "query": "example"}'`
+          },
+          dynamic_features: {
+            category_discovery: 'Tools show only active data categories',
+            contextual_hints: 'Descriptions include trigger words for when to query',
+            real_time_updates: 'Categories activate/deactivate based on data presence'
+          },
+          timestamp: new Date().toISOString()
+        });
+      }
     } catch (error) {
       logger.error('Error handling tools list request', error as Error, ErrorCategory.NETWORK);
       res.status(500).json({
@@ -386,6 +421,147 @@ class HTTPMCPServer {
         message: 'Failed to retrieve tools list',
         timestamp: new Date().toISOString()
       });
+    }
+  }
+
+  private async getDynamicTools(): Promise<any[]> {
+    try {
+      const mcpServer = await this.getMCPServer();
+      
+      // Simulate a tools/list request to get dynamic tools
+      // We'll use the same logic as the MCP server's ListToolsRequestSchema handler
+      const { CategoryManager } = await import('../services/CategoryManager.js');
+      const { supabaseAdmin } = await import('../database/client.js');
+      
+      const categoryManager = new CategoryManager(supabaseAdmin);
+      const activeCategories = await categoryManager.getActiveCategories();
+      const activeCategoryNames = activeCategories.map(c => c.name);
+      const dataSummary = await categoryManager.generateActiveDataSummary();
+      const triggerHints = await categoryManager.generateTriggerWordHints();
+
+      return [
+        {
+          name: 'extract_personal_data',
+          description: activeCategories.length > 0 
+            ? `Extract personal data from your database. ${dataSummary}. ${triggerHints}`
+            : 'No personal data available yet. Start adding data to enable extraction.',
+          inputSchema: {
+            type: 'object',
+            properties: {
+              user_id: {
+                type: 'string',
+                description: 'User identifier',
+              },
+              data_types: activeCategories.length > 0 ? {
+                type: 'array',
+                items: {
+                  type: 'string',
+                  enum: activeCategoryNames,
+                },
+                description: `Categories to extract: ${activeCategories.map(c => `${c.name} (${c.displayName})`).join(', ')}`,
+              } : {
+                type: 'array',
+                items: { type: 'string' },
+                description: 'No data categories available yet',
+              },
+              filters: {
+                type: 'object',
+                description: 'Optional filtering criteria',
+              },
+              limit: {
+                type: 'number',
+                default: 50,
+                description: 'Maximum number of records',
+              },
+              offset: {
+                type: 'number',
+                default: 0,
+                description: 'Pagination offset',
+              },
+            },
+            required: ['user_id'],
+          },
+        },
+        {
+          name: 'create_personal_data',
+          description: 'Create new personal data record with automatic category detection. Categories activate when first data is added.',
+          inputSchema: {
+            type: 'object',
+            properties: {
+              user_id: {
+                type: 'string',
+                description: 'User identifier',
+              },
+              data_type: {
+                type: 'string',
+                enum: ['contact', 'document', 'preference', 'custom', 'book', 'author', 'interest', 'software'],
+                description: 'Type of data - will be auto-mapped to appropriate category',
+              },
+              title: {
+                type: 'string',
+                description: 'Record title',
+              },
+              content: {
+                type: 'object',
+                description: 'Record content',
+              },
+              tags: {
+                type: 'array',
+                items: { type: 'string' },
+                description: 'Tags for categorization',
+              },
+              classification: {
+                type: 'string',
+                enum: ['public', 'personal', 'sensitive', 'confidential'],
+                default: 'personal',
+                description: 'Data classification level',
+              },
+            },
+            required: ['user_id', 'data_type', 'title', 'content'],
+          },
+        },
+        {
+          name: 'search_personal_data',
+          description: activeCategories.length > 0
+            ? `Search through your personal data. ${dataSummary}. ${triggerHints}`
+            : 'No personal data available to search yet.',
+          inputSchema: {
+            type: 'object',
+            properties: {
+              user_id: {
+                type: 'string',
+                description: 'User identifier',
+              },
+              query: {
+                type: 'string',
+                description: 'Search query',
+              },
+              data_types: activeCategories.length > 0 ? {
+                type: 'array',
+                items: {
+                  type: 'string',
+                  enum: activeCategoryNames,
+                },
+                description: `Limit search to specific categories: ${activeCategoryNames.join(', ')}`,
+              } : {
+                type: 'array',
+                items: { type: 'string' },
+                description: 'No categories available to search',
+              },
+              limit: {
+                type: 'number',
+                default: 20,
+                description: 'Maximum results',
+              },
+            },
+            required: ['user_id', 'query'],
+          },
+        }
+      ];
+    } catch (error) {
+      logger.error('Error generating dynamic tools', error as Error, ErrorCategory.SYSTEM);
+      // Fallback to static tools
+      return this.toolRegistry.getTools().slice(0, 3); // Return main tools only
     }
   }
 
