@@ -30,21 +30,27 @@ export class ToolRegistry {
       this.tools = [
         {
           name: 'extract_personal_data',
-          description: 'Extract personal data with optional filtering',
+          description: 'Extract groups of similar entries by tags from a specific user profile or all profiles. Use when looking for ambiguous categories like "family members", "work contacts", "sci-fi books", or "health records". Perfect for discovering related entries you might not remember specifically.',
           inputSchema: {
             type: 'object',
             properties: {
-              user_id: { type: 'string', description: 'User identifier' },
+              tags: { 
+                type: 'array', 
+                items: { type: 'string' },
+                minItems: 1,
+                description: 'Category tags to find groups of entries (e.g., ["family"] for all family members, ["work"] for work contacts, ["sci-fi"] for science fiction books). Use for broad categories, not specific names.'
+              },
+              user_id: { type: 'string', format: 'uuid', description: 'Optional: Specify which user profile to extract from. If omitted, searches all profiles.' },
               data_types: {
                 type: 'array',
                 items: { type: 'string', enum: ['contact', 'document', 'preference', 'custom'] },
-                description: 'Types of data to extract'
+                description: 'Optional: Types of data to include'
               },
-              filters: { type: 'object', description: 'Optional filtering criteria' },
+              filters: { type: 'object', description: 'Optional: Additional filtering criteria' },
               limit: { type: 'number', default: 50, description: 'Maximum number of records' },
               offset: { type: 'number', default: 0, description: 'Pagination offset' }
             },
-            required: ['user_id']
+            required: ['tags']
           },
           examples: this.getToolExamples('extract_personal_data')
         },
@@ -97,16 +103,20 @@ export class ToolRegistry {
         },
         {
           name: 'search_personal_data',
-          description: 'Search through personal data using text queries',
+          description: 'Search for specific entries by title within a user profile or all profiles. Use when you know exactly what you\'re looking for, like "Joanne Wong", "mom birthday contact", "Dune book", or "dentist appointment notes". Perfect for finding a particular person, document, or item.',
           inputSchema: {
             type: 'object',
             properties: {
-              user_id: { type: 'string', description: 'User identifier' },
-              query: { type: 'string', description: 'Search query text' },
-              data_types: { type: 'array', items: { type: 'string' }, description: 'Data types to search' },
+              query: { type: 'string', description: 'Specific keywords or names to find exact entries (e.g., "Joanne Wong", "dentist appointment", "iPhone charger location"). Use actual names, not categories.' },
+              user_id: { type: 'string', format: 'uuid', description: 'Optional: Specify which user profile to search within. If omitted, searches all profiles.' },
+              data_types: { 
+                type: 'array', 
+                items: { type: 'string', enum: ['contact', 'document', 'preference', 'custom'] }, 
+                description: 'Optional: Types of data to include in search'
+              },
               limit: { type: 'number', default: 20, description: 'Maximum results' }
             },
-            required: ['user_id', 'query']
+            required: ['query']
           },
           examples: this.getToolExamples('search_personal_data')
         },
@@ -154,23 +164,19 @@ export class ToolRegistry {
     const examples: Record<string, any[]> = {
       extract_personal_data: [
         {
-          description: "Extract all contact data for a user",
+          description: "Extract contacts by relationship",
           input: {
-            user_id: "user123",
+            tags: ["family", "close-friend"],
             data_types: ["contact"],
             limit: 10
           }
         },
         {
-          description: "Extract recent documents with pagination",
+          description: "Extract books by genre",
           input: {
-            user_id: "user123",
+            tags: ["sci-fi", "dystopian"],
             data_types: ["document"],
-            filters: {
-              date_from: "2024-01-01T00:00:00Z"
-            },
-            limit: 20,
-            offset: 0
+            limit: 20
           }
         }
       ],
@@ -193,19 +199,18 @@ export class ToolRegistry {
       ],
       search_personal_data: [
         {
-          description: "Search for contact information",
+          description: "Search for a specific contact by name",
           input: {
-            user_id: "user123",
-            query: "john email",
+            query: "mom birthday contact",
             data_types: ["contact"],
             limit: 10
           }
         },
         {
-          description: "Search all data types for a keyword",
+          description: "Search for a specific book",
           input: {
-            user_id: "user123",
-            query: "project meeting",
+            query: "dune frank herbert",
+            data_types: ["document"],
             limit: 20
           }
         }

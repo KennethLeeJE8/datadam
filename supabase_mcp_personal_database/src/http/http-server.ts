@@ -350,35 +350,70 @@ class HTTPMCPServer {
   private async handleListTools(req: express.Request, res: express.Response): Promise<void> {
     logger.info('Received REST API request for tools list', { 
       ip: req.ip,
-      requestId: (req as any).requestId
+      requestId: (req as any).requestId,
+      endpoint: req.path
     });
 
     try {
-      // Ensure MCP server is initialized
-      await this.getMCPServer();
+      // Determine which tools to return based on endpoint
+      const isApiEndpoint = req.path.startsWith('/api');
       
-      const tools = this.toolRegistry.getTools();
-      
-      res.status(200).json({
-        tools: tools,
-        server_info: {
-          name: 'personal-data-server',
-          version: '1.0.0',
-          capabilities: ['tools', 'resources', 'prompts']
-        },
-        endpoints: {
-          list_tools: 'GET /tools',
-          execute_tool: 'POST /tools/{tool_name}',
-          mcp_endpoint: 'POST /mcp-public',
-          documentation: 'GET /',
-          health: 'GET /health'
-        },
-        usage_examples: {
-          list_tools: `curl ${req.protocol}://${req.get('host')}/tools`,
-          execute_tool: `curl -X POST ${req.protocol}://${req.get('host')}/tools/search_personal_data -H "Content-Type: application/json" -d '{"user_id": "user123", "query": "example"}'`
-        },
-        timestamp: new Date().toISOString()
-      });
+      if (isApiEndpoint) {
+        // Traditional API: Return static tools from ToolRegistry
+        await this.getMCPServer(); // Ensure initialized
+        const tools = this.toolRegistry.getTools();
+        
+        res.status(200).json({
+          tools: tools,
+          server_info: {
+            name: 'personal-data-server',
+            version: '1.0.0',
+            capabilities: ['tools', 'resources', 'prompts']
+          },
+          endpoints: {
+            list_tools: 'GET /tools',
+            execute_tool: 'POST /tools/{tool_name}',
+            mcp_endpoint: 'POST /mcp',
+            documentation: 'GET /',
+            health: 'GET /health'
+          },
+          usage_examples: {
+            list_tools: `curl ${req.protocol}://${req.get('host')}/tools`,
+            execute_tool: `curl -X POST ${req.protocol}://${req.get('host')}/tools/search_personal_data -H "Content-Type: application/json" -d '{"user_id": "user123", "query": "example"}'`
+          },
+          timestamp: new Date().toISOString()
+        });
+      } else {
+        // AI Agent/MCP endpoint: Return dynamic tools 
+        const dynamicTools = await this.getDynamicTools();
+        
+        res.status(200).json({
+          tools: dynamicTools,
+          server_info: {
+            name: 'personal-data-server',
+            version: '2.0.0', // Updated version for dynamic features
+            capabilities: ['tools', 'resources', 'prompts'],
+            features: ['dynamic_categories', 'contextual_hints', 'trigger_words']
+          },
+          endpoints: {
+            list_tools: 'GET /tools',
+            execute_tool: 'POST /tools/{tool_name}',
+            mcp_endpoint: 'POST /mcp',
+            documentation: 'GET /',
+            health: 'GET /health'
+          },
+          usage_examples: {
+            list_tools: `curl ${req.protocol}://${req.get('host')}/tools`,
+            execute_tool: `curl -X POST ${req.protocol}://${req.get('host')}/tools/search_personal_data -H "Content-Type: application/json" -d '{"user_id": "user123", "query": "example"}'`
+          },
+          dynamic_features: {
+            category_discovery: 'Tools show only active data categories',
+            contextual_hints: 'Descriptions include trigger words for when to query',
+            real_time_updates: 'Categories activate/deactivate based on data presence'
+          },
+          timestamp: new Date().toISOString()
+        });
+      }
     } catch (error) {
       logger.error('Error handling tools list request', error as Error, ErrorCategory.NETWORK);
       res.status(500).json({
@@ -386,6 +421,210 @@ class HTTPMCPServer {
         message: 'Failed to retrieve tools list',
         timestamp: new Date().toISOString()
       });
+    }
+  }
+
+  private async getDynamicTools(): Promise<any[]> {
+    try {
+      const mcpServer = await this.getMCPServer();
+      
+      // Simulate a tools/list request to get dynamic tools
+      // We'll use the same logic as the MCP server's ListToolsRequestSchema handler
+      const { CategoryManager } = await import('../services/CategoryManager.js');
+      const { supabaseAdmin } = await import('../database/client.js');
+      
+      const categoryManager = new CategoryManager(supabaseAdmin);
+      const activeCategories = await categoryManager.getActiveCategories();
+      const activeCategoryNames = activeCategories.map(c => c.name);
+      const dataSummary = await categoryManager.generateActiveDataSummary();
+      const triggerHints = await categoryManager.generateTriggerWordHints();
+
+      return [
+        {
+          name: 'extract_personal_data',
+          description: 'Extract groups of similar entries by tags from a specific user profile or all profiles. Use when looking for ambiguous categories like "family members", "work contacts", "sci-fi books", or "health records". Perfect for discovering related entries you might not remember specifically.',
+          inputSchema: {
+            type: 'object',
+            properties: {
+              tags: { 
+                type: 'array', 
+                items: { type: 'string' },
+                minItems: 1,
+                description: 'Category tags to find groups of entries (e.g., ["family"] for all family members, ["work"] for work contacts, ["sci-fi"] for science fiction books). Use for broad categories, not specific names.'
+              },
+              user_id: {
+                type: 'string',
+                format: 'uuid',
+                description: 'Optional: Specify which user profile to extract from. If omitted, searches all profiles.',
+              },
+              data_types: {
+                type: 'array',
+                items: { type: 'string', enum: ['contact', 'document', 'preference', 'custom'] },
+                description: 'Optional: Types of data to include',
+              },
+              filters: {
+                type: 'object',
+                description: 'Optional: Additional filtering criteria',
+              },
+              limit: {
+                type: 'number',
+                default: 50,
+                description: 'Maximum number of records',
+              },
+              offset: {
+                type: 'number',
+                default: 0,
+                description: 'Pagination offset',
+              },
+            },
+            required: ['tags'],
+          },
+        },
+        {
+          name: 'create_personal_data',
+          description: 'Create new personal data record with automatic category detection. Categories activate when first data is added.',
+          inputSchema: {
+            type: 'object',
+            properties: {
+              user_id: {
+                type: 'string',
+                description: 'User identifier',
+              },
+              data_type: {
+                type: 'string',
+                enum: ['contact', 'document', 'preference', 'custom', 'book', 'author', 'interest', 'software'],
+                description: 'Type of data - will be auto-mapped to appropriate category',
+              },
+              title: {
+                type: 'string',
+                description: 'Record title',
+              },
+              content: {
+                type: 'object',
+                description: 'Record content',
+              },
+              tags: {
+                type: 'array',
+                items: { type: 'string' },
+                description: 'Tags for categorization',
+              },
+              classification: {
+                type: 'string',
+                enum: ['public', 'personal', 'sensitive', 'confidential'],
+                default: 'personal',
+                description: 'Data classification level',
+              },
+            },
+            required: ['user_id', 'data_type', 'title', 'content'],
+          },
+        },
+        {
+          name: 'search_personal_data',
+          description: 'Search for specific entries by title within a user profile or all profiles. Use when you know exactly what you\'re looking for, like "Joanne Wong", "mom birthday contact", "Dune book", or "dentist appointment notes". Perfect for finding a particular person, document, or item.',
+          inputSchema: {
+            type: 'object',
+            properties: {
+              query: {
+                type: 'string',
+                description: 'Specific keywords or names to find exact entries (e.g., "Joanne Wong", "dentist appointment", "iPhone charger location"). Use actual names, not categories.',
+              },
+              user_id: {
+                type: 'string',
+                format: 'uuid',
+                description: 'Optional: Specify which user profile to search within. If omitted, searches all profiles.',
+              },
+              data_types: {
+                type: 'array',
+                items: { type: 'string', enum: ['contact', 'document', 'preference', 'custom'] },
+                description: 'Optional: Types of data to include in search',
+              },
+              limit: {
+                type: 'number',
+                default: 20,
+                description: 'Maximum results',
+              },
+            },
+            required: ['query'],
+          },
+        },
+        {
+          name: 'update_personal_data',
+          description: activeCategories.length > 0
+            ? `Update existing personal data records. ${dataSummary}. ${triggerHints}`
+            : 'Update personal data records. No data available yet.',
+          inputSchema: {
+            type: 'object',
+            properties: {
+              record_id: {
+                type: 'string',
+                description: 'Record identifier to update',
+              },
+              updates: {
+                type: 'object',
+                description: 'Fields to update',
+              },
+            },
+            required: ['record_id', 'updates'],
+          },
+        },
+        {
+          name: 'delete_personal_data',
+          description: activeCategories.length > 0
+            ? `Delete personal data records. ${dataSummary}. Use with caution - supports both soft and hard deletion for GDPR compliance.`
+            : 'Delete personal data records. No data available yet.',
+          inputSchema: {
+            type: 'object',
+            properties: {
+              record_ids: {
+                type: 'array',
+                items: { type: 'string' },
+                description: 'Record identifiers to delete',
+              },
+              hard_delete: {
+                type: 'boolean',
+                default: false,
+                description: 'Permanent deletion for GDPR compliance',
+              },
+            },
+            required: ['record_ids'],
+          },
+        },
+        {
+          name: 'add_personal_data_field',
+          description: 'Add a new personal data field type definition to extend the data schema dynamically.',
+          inputSchema: {
+            type: 'object',
+            properties: {
+              field_name: {
+                type: 'string',
+                description: 'Unique field identifier',
+              },
+              data_type: {
+                type: 'string',
+                enum: ['string', 'number', 'date', 'json', 'encrypted'],
+                description: 'Field data type',
+              },
+              validation_rules: {
+                type: 'object',
+                description: 'JSON schema validation rules',
+              },
+              is_required: {
+                type: 'boolean',
+                default: false,
+                description: 'Whether field is mandatory',
+              },
+              default_value: {
+                description: 'Default value for the field',
+              },
+            },
+            required: ['field_name', 'data_type'],
+          },
+        }
+      ];
+    } catch (error) {
+      logger.error('Error generating dynamic tools', error as Error, ErrorCategory.SYSTEM);
+      // Fallback to static tools
+      return this.toolRegistry.getTools(); // Return all static tools as fallback
     }
   }
 

@@ -1,15 +1,22 @@
 import { Server } from '@modelcontextprotocol/sdk/server/index.js';
 import { ReadResourceRequestSchema } from '@modelcontextprotocol/sdk/types.js';
 import { supabaseAdmin } from '../../database/client.js';
+import { CategoryManager } from '../../services/CategoryManager.js';
 
 export function setupPersonalDataResources(server: Server): void {
+  // Initialize category manager for resource handlers
+  const categoryManager = new CategoryManager(supabaseAdmin);
+
   server.setRequestHandler(ReadResourceRequestSchema, async (request) => {
     const { uri } = request.params;
 
     try {
       switch (true) {
         case uri.startsWith('schema://'):
-          return await handleSchemaResource(uri);
+          return await handleSchemaResource(uri, categoryManager);
+
+        case uri.startsWith('categories://'):
+          return await handleCategoriesResource(uri, categoryManager);
 
         case uri.startsWith('stats://'):
           return await handleStatsResource(uri);
@@ -37,7 +44,7 @@ export function setupPersonalDataResources(server: Server): void {
   });
 }
 
-async function handleSchemaResource(uri: string) {
+async function handleSchemaResource(uri: string, categoryManager: CategoryManager) {
   const resourceType = uri.split('://')[1];
 
   switch (resourceType) {
@@ -54,12 +61,20 @@ async function handleSchemaResource(uri: string) {
       const { data: typeStats, error: statsError } = await supabaseAdmin
         .rpc('get_data_type_stats');
 
+      // Get category information
+      const categoryStats = await categoryManager.getCategoryStats();
+      const contextualHints = await categoryManager.getContextualHints();
+
       const schema = {
         available_data_types: [
           'contact',
           'document', 
           'preference',
-          'custom'
+          'custom',
+          'book',
+          'author', 
+          'interest',
+          'software'
         ],
         classification_levels: [
           'public',
@@ -69,7 +84,16 @@ async function handleSchemaResource(uri: string) {
         ],
         field_definitions: fieldDefinitions || [],
         data_type_statistics: typeStats || [],
-        schema_version: '1.0.0',
+        
+        // New: Dynamic category information
+        active_categories: categoryStats.activeCategoryList,
+        category_context: {
+          summary: `${categoryStats.activeCategories} active categories with ${categoryStats.totalItems} total items`,
+          contextual_hints: contextualHints,
+          usage_guidance: 'Query categories when user mentions associated trigger words or asks about related topics'
+        },
+        
+        schema_version: '2.0.0', // Bumped for dynamic categories
         last_updated: new Date().toISOString(),
       };
 
@@ -86,6 +110,80 @@ async function handleSchemaResource(uri: string) {
 
     default:
       throw new Error(`Unknown schema resource: ${resourceType}`);
+  }
+}
+
+async function handleCategoriesResource(uri: string, categoryManager: CategoryManager) {
+  const resourceType = uri.split('://')[1];
+
+  switch (resourceType) {
+    case 'available_data': {
+      const categoryStats = await categoryManager.getCategoryStats();
+      const contextualHints = await categoryManager.getContextualHints();
+
+      const response = {
+        summary: categoryStats.activeCategories > 0
+          ? `You have ${categoryStats.totalItems} items across ${categoryStats.activeCategories} active categories`
+          : 'No personal data available yet. Start adding data to activate categories.',
+        
+        active_categories: categoryStats.activeCategoryList.map(category => ({
+          name: category.name,
+          display_name: category.displayName,
+          description: category.description,
+          item_count: category.itemCount,
+          trigger_words: category.triggerWords,
+          query_hint: category.queryHint,
+          example_queries: category.exampleQueries,
+          last_modified: category.lastModified
+        })),
+        
+        inactive_categories: categoryStats.allCategories
+          .filter(c => !c.isActive)
+          .map(category => ({
+            name: category.name,
+            display_name: category.displayName,
+            description: category.description,
+            trigger_words: category.triggerWords,
+            query_hint: category.queryHint
+          })),
+        
+        contextual_guidance: {
+          when_to_query: 'Query the personal database when the user mentions any trigger words or asks about topics related to active categories',
+          trigger_examples: categoryStats.activeCategoryList.length > 0 
+            ? categoryStats.activeCategoryList.flatMap(c => c.triggerWords.slice(0, 2)).slice(0, 8)
+            : [],
+          usage_patterns: contextualHints.map(hint => ({
+            category: hint.displayName,
+            when_to_use: hint.queryHint,
+            sample_triggers: hint.triggerWords.slice(0, 3)
+          }))
+        },
+        
+        statistics: {
+          total_categories: categoryStats.totalCategories,
+          active_categories: categoryStats.activeCategories,
+          total_items: categoryStats.totalItems,
+          last_updated: categoryStats.lastUpdated
+        },
+        
+        ai_agent_instructions: categoryStats.activeCategories > 0 
+          ? `This user has active personal data. Query when they mention: ${categoryStats.activeCategoryList.flatMap(c => c.triggerWords.slice(0, 2)).slice(0, 6).join(', ')}`
+          : 'No personal data available yet. Inform user they can start adding data to enable personal queries.'
+      };
+
+      return {
+        contents: [
+          {
+            uri,
+            mimeType: 'application/json',
+            text: JSON.stringify(response, null, 2),
+          },
+        ],
+      };
+    }
+
+    default:
+      throw new Error(`Unknown categories resource: ${resourceType}`);
   }
 }
 
