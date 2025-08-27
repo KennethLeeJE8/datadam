@@ -10,7 +10,8 @@ import { CategoryManager } from '../../services/CategoryManager.js';
 
 // Input validation schemas
 const ExtractPersonalDataSchema = z.object({
-  user_id: z.string(),
+  tags: z.array(z.string()).min(1, 'At least one tag is required'),
+  user_id: z.string().uuid('Invalid user_id format. Expected a valid UUID.').optional(),
   data_types: z.array(z.enum(['contact', 'document', 'preference', 'custom'])).optional(),
   filters: z.record(z.unknown()).optional(),
   limit: z.number().min(1).max(500).default(50),
@@ -37,9 +38,9 @@ const DeletePersonalDataSchema = z.object({
 });
 
 const SearchPersonalDataSchema = z.object({
-  user_id: z.string(),
-  query: z.string().min(1),
-  data_types: z.array(z.string()).optional(),
+  query: z.string().min(1, 'Search query is required'),
+  user_id: z.string().uuid('Invalid user_id format. Expected a valid UUID.').optional(),
+  data_types: z.array(z.enum(['contact', 'document', 'preference', 'custom'])).optional(),
   limit: z.number().min(1).max(100).default(20),
 });
 
@@ -237,6 +238,7 @@ async function handleExtractPersonalData(args: unknown, requestLogger: any) {
     const params = ExtractPersonalDataSchema.parse(args);
     
     requestLogger.info('Starting extract_personal_data operation', {
+      tags: params.tags,
       userId: params.user_id,
       dataTypes: params.data_types,
       filters: params.filters,
@@ -247,7 +249,13 @@ async function handleExtractPersonalData(args: unknown, requestLogger: any) {
     let query = supabaseAdmin
       .from('personal_data')
       .select('*')
-      .eq('user_id', params.user_id);
+      .contains('tags', params.tags);
+
+    // Apply user_id filter if provided
+    if (params.user_id) {
+      query = query.eq('user_id', params.user_id);
+      requestLogger.debug('Applied user_id filter', { userId: params.user_id });
+    }
 
     requestLogger.debug('Built base query for personal_data table', {
       userId: params.user_id
@@ -311,8 +319,9 @@ async function handleExtractPersonalData(args: unknown, requestLogger: any) {
       totalCount: count
     });
 
-    // Log the data access
-    await logDataAccess(params.user_id, 'READ', 'personal_data');
+    // Log the data access - use a default user_id if not provided
+    const logUserId = params.user_id || 'anonymous';
+    await logDataAccess(logUserId, 'READ', 'personal_data');
     
     const totalDuration = Date.now() - startTime;
     requestLogger.info('Data extraction completed', {
@@ -586,8 +595,12 @@ async function handleSearchPersonalData(args: unknown, requestLogger: any) {
   // Use a more compatible search approach
   let query = supabaseAdmin
     .from('personal_data')
-    .select('*')
-    .eq('user_id', params.user_id);
+    .select('*');
+
+  // Apply user_id filter if provided
+  if (params.user_id) {
+    query = query.eq('user_id', params.user_id);
+  }
 
   // Apply data type filter first
   if (params.data_types && params.data_types.length > 0) {
@@ -609,7 +622,7 @@ async function handleSearchPersonalData(args: unknown, requestLogger: any) {
     requestLogger.debug('Text search failed, falling back to ILIKE', { error: textSearchError });
     
     const ilikeResult = await query
-      .or(`title.ilike.%${params.query}%, content::text.ilike.%${params.query}%`)
+      .ilike('title', `%${params.query}%`)
       .limit(params.limit)
       .order('created_at', { ascending: false });
     
@@ -619,9 +632,10 @@ async function handleSearchPersonalData(args: unknown, requestLogger: any) {
 
   if (error) throw new Error(`Database error: ${error.message}`);
 
-  // Log the search operation
+  // Log the search operation - use a default user_id if not provided
+  const logUserId = params.user_id || 'anonymous';
   await logDataAccess(
-    params.user_id,
+    logUserId,
     'READ',
     'personal_data',
     undefined,

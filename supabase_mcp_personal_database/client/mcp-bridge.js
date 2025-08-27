@@ -299,9 +299,12 @@ class MCPBridge {
       
       this.log('Calling tool', { toolName: name, args });
       
+      // Transform arguments to handle common AI tool issues
+      const transformedArgs = this.transformToolArguments(name, args);
+      
       // Use the /tools/{toolName} endpoint with MCP format
       const result = await this.makeRestRequest('POST', `/tools/${name}`, {
-        arguments: args
+        arguments: transformedArgs
       });
       
       this.log('Tool call completed', { toolName: name, result: !!result });
