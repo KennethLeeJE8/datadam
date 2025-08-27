@@ -607,28 +607,11 @@ async function handleSearchPersonalData(args: unknown, requestLogger: any) {
     query = query.in('data_type', params.data_types);
   }
 
-  // Try text search, fall back to ILIKE if it fails
-  let data, error;
-  try {
-    const textSearchResult = await query
-      .textSearch('title,content', params.query)
-      .limit(params.limit)
-      .order('created_at', { ascending: false });
-    
-    data = textSearchResult.data;
-    error = textSearchResult.error;
-  } catch (textSearchError) {
-    // Fallback to ILIKE search
-    requestLogger.debug('Text search failed, falling back to ILIKE', { error: textSearchError });
-    
-    const ilikeResult = await query
-      .ilike('title', `%${params.query}%`)
-      .limit(params.limit)
-      .order('created_at', { ascending: false });
-    
-    data = ilikeResult.data;
-    error = ilikeResult.error;
-  }
+  // Use ILIKE search for title matching (better for names and phrases with spaces)
+  const { data, error } = await query
+    .ilike('title', `%${params.query}%`)
+    .limit(params.limit)
+    .order('created_at', { ascending: false });
 
   if (error) throw new Error(`Database error: ${error.message}`);
 
