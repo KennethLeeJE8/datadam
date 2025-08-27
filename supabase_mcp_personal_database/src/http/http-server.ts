@@ -442,31 +442,29 @@ class HTTPMCPServer {
       return [
         {
           name: 'extract_personal_data',
-          description: activeCategories.length > 0 
-            ? `Extract personal data from your database. ${dataSummary}. ${triggerHints}`
-            : 'No personal data available yet. Start adding data to enable extraction.',
+          description: 'Extract personal data by tags. Use relationship tags like ["family", "close-friend"] for contacts, or genre/author tags like ["sci-fi", "stephen-king"] for books.',
           inputSchema: {
             type: 'object',
             properties: {
+              tags: { 
+                type: 'array', 
+                items: { type: 'string' },
+                minItems: 1,
+                description: 'Tags to search for (e.g., ["family", "close-friend"] for contacts, ["sci-fi", "fantasy"] for books). At least one tag is required.'
+              },
               user_id: {
                 type: 'string',
-                description: 'User identifier',
+                format: 'uuid',
+                description: 'Optional: Valid UUID format if filtering by specific user',
               },
-              data_types: activeCategories.length > 0 ? {
+              data_types: {
                 type: 'array',
-                items: {
-                  type: 'string',
-                  enum: activeCategoryNames,
-                },
-                description: `Categories to extract: ${activeCategories.map(c => `${c.name} (${c.displayName})`).join(', ')}`,
-              } : {
-                type: 'array',
-                items: { type: 'string' },
-                description: 'No data categories available yet',
+                items: { type: 'string', enum: ['contact', 'document', 'preference', 'custom'] },
+                description: 'Optional: Types of data to include',
               },
               filters: {
                 type: 'object',
-                description: 'Optional filtering criteria',
+                description: 'Optional: Additional filtering criteria',
               },
               limit: {
                 type: 'number',
@@ -479,7 +477,7 @@ class HTTPMCPServer {
                 description: 'Pagination offset',
               },
             },
-            required: ['user_id'],
+            required: ['tags'],
           },
         },
         {
@@ -522,31 +520,23 @@ class HTTPMCPServer {
         },
         {
           name: 'search_personal_data',
-          description: activeCategories.length > 0
-            ? `Search through your personal data. ${dataSummary}. ${triggerHints}`
-            : 'No personal data available to search yet.',
+          description: 'Search personal data by title. Enter keywords to find matching titles in your data entries.',
           inputSchema: {
             type: 'object',
             properties: {
-              user_id: {
-                type: 'string',
-                description: 'User identifier',
-              },
               query: {
                 type: 'string',
-                description: 'Search query',
+                description: 'Search keywords to find in data titles (e.g., "mom birthday contact", "dune frank herbert")',
               },
-              data_types: activeCategories.length > 0 ? {
+              user_id: {
+                type: 'string',
+                format: 'uuid',
+                description: 'Optional: Valid UUID format if searching for specific user',
+              },
+              data_types: {
                 type: 'array',
-                items: {
-                  type: 'string',
-                  enum: activeCategoryNames,
-                },
-                description: `Limit search to specific categories: ${activeCategoryNames.join(', ')}`,
-              } : {
-                type: 'array',
-                items: { type: 'string' },
-                description: 'No categories available to search',
+                items: { type: 'string', enum: ['contact', 'document', 'preference', 'custom'] },
+                description: 'Optional: Types of data to include in search',
               },
               limit: {
                 type: 'number',
@@ -554,7 +544,7 @@ class HTTPMCPServer {
                 description: 'Maximum results',
               },
             },
-            required: ['user_id', 'query'],
+            required: ['query'],
           },
         },
         {
