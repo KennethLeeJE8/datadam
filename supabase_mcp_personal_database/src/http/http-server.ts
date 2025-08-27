@@ -442,7 +442,7 @@ class HTTPMCPServer {
       return [
         {
           name: 'extract_personal_data',
-          description: 'Extract groups of similar entries by tags. Use when looking for ambiguous categories like "family members", "work contacts", "sci-fi books", or "health records". Perfect for discovering related entries you might not remember specifically.',
+          description: 'Extract groups of similar entries by tags from a specific user profile or all profiles. Use when looking for ambiguous categories like "family members", "work contacts", "sci-fi books", or "health records". Perfect for discovering related entries you might not remember specifically.',
           inputSchema: {
             type: 'object',
             properties: {
@@ -455,7 +455,7 @@ class HTTPMCPServer {
               user_id: {
                 type: 'string',
                 format: 'uuid',
-                description: 'Optional: Valid UUID format if filtering by specific user',
+                description: 'Optional: Specify which user profile to extract from. If omitted, searches all profiles.',
               },
               data_types: {
                 type: 'array',
@@ -520,7 +520,7 @@ class HTTPMCPServer {
         },
         {
           name: 'search_personal_data',
-          description: 'Search for specific entries by title. Use when you know exactly what you\'re looking for, like "Joanne Wong", "mom birthday contact", "Dune book", or "dentist appointment notes". Perfect for finding a particular person, document, or item.',
+          description: 'Search for specific entries by title within a user profile or all profiles. Use when you know exactly what you\'re looking for, like "Joanne Wong", "mom birthday contact", "Dune book", or "dentist appointment notes". Perfect for finding a particular person, document, or item.',
           inputSchema: {
             type: 'object',
             properties: {
@@ -531,7 +531,7 @@ class HTTPMCPServer {
               user_id: {
                 type: 'string',
                 format: 'uuid',
-                description: 'Optional: Valid UUID format if searching for specific user',
+                description: 'Optional: Specify which user profile to search within. If omitted, searches all profiles.',
               },
               data_types: {
                 type: 'array',

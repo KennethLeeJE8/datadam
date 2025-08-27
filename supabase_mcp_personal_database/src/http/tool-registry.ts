@@ -30,7 +30,7 @@ export class ToolRegistry {
       this.tools = [
         {
           name: 'extract_personal_data',
-          description: 'Extract groups of similar entries by tags. Use when looking for ambiguous categories like "family members", "work contacts", "sci-fi books", or "health records". Perfect for discovering related entries you might not remember specifically.',
+          description: 'Extract groups of similar entries by tags from a specific user profile or all profiles. Use when looking for ambiguous categories like "family members", "work contacts", "sci-fi books", or "health records". Perfect for discovering related entries you might not remember specifically.',
           inputSchema: {
             type: 'object',
             properties: {
@@ -40,7 +40,7 @@ export class ToolRegistry {
                 minItems: 1,
                 description: 'Category tags to find groups of entries (e.g., ["family"] for all family members, ["work"] for work contacts, ["sci-fi"] for science fiction books). Use for broad categories, not specific names.'
               },
-              user_id: { type: 'string', format: 'uuid', description: 'Optional: Valid UUID format if filtering by specific user' },
+              user_id: { type: 'string', format: 'uuid', description: 'Optional: Specify which user profile to extract from. If omitted, searches all profiles.' },
               data_types: {
                 type: 'array',
                 items: { type: 'string', enum: ['contact', 'document', 'preference', 'custom'] },
@@ -103,12 +103,12 @@ export class ToolRegistry {
         },
         {
           name: 'search_personal_data',
-          description: 'Search for specific entries by title. Use when you know exactly what you\'re looking for, like "Joanne Wong", "mom birthday contact", "Dune book", or "dentist appointment notes". Perfect for finding a particular person, document, or item.',
+          description: 'Search for specific entries by title within a user profile or all profiles. Use when you know exactly what you\'re looking for, like "Joanne Wong", "mom birthday contact", "Dune book", or "dentist appointment notes". Perfect for finding a particular person, document, or item.',
           inputSchema: {
             type: 'object',
             properties: {
               query: { type: 'string', description: 'Specific keywords or names to find exact entries (e.g., "Joanne Wong", "dentist appointment", "iPhone charger location"). Use actual names, not categories.' },
-              user_id: { type: 'string', format: 'uuid', description: 'Optional: Valid UUID format if searching for specific user' },
+              user_id: { type: 'string', format: 'uuid', description: 'Optional: Specify which user profile to search within. If omitted, searches all profiles.' },
               data_types: { 
                 type: 'array', 
                 items: { type: 'string', enum: ['contact', 'document', 'preference', 'custom'] }, 
