@@ -30,7 +30,7 @@ export class ToolRegistry {
       this.tools = [
         {
           name: 'extract_personal_data',
-          description: 'Extract personal data by tags. Use relationship tags like ["family", "close-friend"] for contacts, or genre/author tags like ["sci-fi", "stephen-king"] for books.',
+          description: 'Extract groups of similar entries by tags. Use when looking for ambiguous categories like "family members", "work contacts", "sci-fi books", or "health records". Perfect for discovering related entries you might not remember specifically.',
           inputSchema: {
             type: 'object',
             properties: {
@@ -38,7 +38,7 @@ export class ToolRegistry {
                 type: 'array', 
                 items: { type: 'string' },
                 minItems: 1,
-                description: 'Tags to search for (e.g., ["family", "close-friend"] for contacts, ["sci-fi", "fantasy"] for books). At least one tag is required.'
+                description: 'Category tags to find groups of entries (e.g., ["family"] for all family members, ["work"] for work contacts, ["sci-fi"] for science fiction books). Use for broad categories, not specific names.'
               },
               user_id: { type: 'string', format: 'uuid', description: 'Optional: Valid UUID format if filtering by specific user' },
               data_types: {
@@ -103,11 +103,11 @@ export class ToolRegistry {
         },
         {
           name: 'search_personal_data',
-          description: 'Search personal data by title. Enter keywords to find matching titles in your data entries.',
+          description: 'Search for specific entries by title. Use when you know exactly what you\'re looking for, like "Joanne Wong", "mom birthday contact", "Dune book", or "dentist appointment notes". Perfect for finding a particular person, document, or item.',
           inputSchema: {
             type: 'object',
             properties: {
-              query: { type: 'string', description: 'Search keywords to find in data titles (e.g., "mom birthday contact", "dune frank herbert")' },
+              query: { type: 'string', description: 'Specific keywords or names to find exact entries (e.g., "Joanne Wong", "dentist appointment", "iPhone charger location"). Use actual names, not categories.' },
               user_id: { type: 'string', format: 'uuid', description: 'Optional: Valid UUID format if searching for specific user' },
               data_types: { 
                 type: 'array', 
