@@ -291,6 +291,9 @@ class HTTPMCPServer {
     this.app.post('/mcp', this.handleMCPPost.bind(this));
     this.app.get('/mcp', this.handleMCPGet.bind(this));
     this.app.delete('/mcp', this.handleMCPDelete.bind(this));
+    
+    // ChatGPT-compatible SSE endpoint
+    this.app.get('/sse', this.handleSSE.bind(this));
 
     // REST API endpoints for easy AI agent integration
     this.app.get('/tools', this.handleListTools.bind(this));
@@ -490,6 +493,94 @@ class HTTPMCPServer {
           error: {
             code: -32603,
             message: 'Error processing session termination'
+          },
+          id: null
+        });
+      }
+    }
+  }
+
+  private async handleSSE(req: express.Request, res: express.Response): Promise<void> {
+    logger.info('Received SSE request from ChatGPT', { 
+      ip: req.ip,
+      requestId: (req as any).requestId,
+      userAgent: req.headers['user-agent']
+    });
+
+    try {
+      // Check Accept header to ensure client can handle SSE
+      const acceptHeader = getHeaderCaseInsensitive(req.headers, 'accept') || '';
+      if (!acceptHeader.includes('text/event-stream')) {
+        logger.warn('Client does not accept text/event-stream', ErrorCategory.VALIDATION, { 
+          acceptHeader,
+          ip: req.ip 
+        });
+        setContentType(req, res);
+        return res.status(406).json({
+          jsonrpc: '2.0',
+          error: {
+            code: -32000,
+            message: 'Not Acceptable: Client must accept text/event-stream'
+          },
+          id: null
+        });
+      }
+
+      // Generate new session for SSE connection
+      const sessionId = randomUUID();
+      logger.info('Creating new SSE session', { sessionId });
+
+      // Set proper SSE headers
+      res.setHeader('Content-Type', 'text/event-stream');
+      res.setHeader('Cache-Control', 'no-cache');
+      res.setHeader('Connection', 'keep-alive');
+      res.setHeader('Access-Control-Allow-Origin', '*');
+      res.setHeader('Access-Control-Allow-Headers', 'Cache-Control');
+      res.setHeader('Mcp-Session-Id', sessionId);
+
+      // Create new transport for this SSE connection
+      const transport = new StreamableHTTPServerTransport({
+        sessionIdGenerator: () => sessionId,
+        onsessioninitialized: (sid: string) => {
+          logger.info('SSE session initialized', { sessionId: sid });
+          this.transports.set(sid, transport);
+        }
+      });
+
+      // Set up cleanup handler
+      transport.onclose = () => {
+        if (this.transports.has(sessionId)) {
+          logger.info('SSE transport closed, cleaning up', { sessionId });
+          this.transports.delete(sessionId);
+        }
+      };
+
+      // Handle connection close
+      req.on('close', () => {
+        if (this.transports.has(sessionId)) {
+          logger.info('SSE connection closed by client', { sessionId });
+          this.transports.delete(sessionId);
+        }
+      });
+
+      // Connect MCP server to transport
+      const mcpServer = await this.getMCPServer();
+      await mcpServer.getServer().connect(transport);
+
+      // Send initial SSE comment to establish connection
+      res.write(': MCP SSE stream established for ChatGPT\n\n');
+
+      // Handle the SSE streaming
+      await transport.handleRequest(req as any, res);
+    } catch (error) {
+      logger.error('Error handling SSE request', error as Error, ErrorCategory.NETWORK);
+      if (!res.headersSent) {
+        setContentType(req, res);
+        res.status(500).json({
+          jsonrpc: '2.0',
+          error: {
+            code: -32603,
+            message: 'Error establishing SSE stream'
           },
           id: null
         });
