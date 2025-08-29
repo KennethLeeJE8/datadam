@@ -52,6 +52,15 @@ const AddPersonalDataFieldSchema = z.object({
   default_value: z.unknown().optional(),
 });
 
+// ChatGPT-specific tool schemas
+const SearchSchema = z.object({
+  query: z.string().min(1, 'Search query is required'),
+});
+
+const FetchSchema = z.object({
+  id: z.string().min(1, 'Document ID is required'),
+});
+
 // Export function for direct tool execution from REST API
 export async function executePersonalDataTool(toolName: string, toolArgs: any): Promise<any> {
   const requestId = `req_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
@@ -90,6 +99,14 @@ export async function executePersonalDataTool(toolName: string, toolArgs: any): 
 
       case 'add_personal_data_field':
         result = await handleAddPersonalDataField(toolArgs, requestLogger);
+        break;
+
+      case 'search':
+        result = await handleSearch(toolArgs, requestLogger);
+        break;
+
+      case 'fetch':
+        result = await handleFetch(toolArgs, requestLogger);
         break;
 
       default:
@@ -159,6 +176,14 @@ export function setupPersonalDataTools(server: Server): void {
 
         case 'add_personal_data_field':
           result = await handleAddPersonalDataField(args, requestLogger);
+          break;
+
+        case 'search':
+          result = await handleSearch(args, requestLogger);
+          break;
+
+        case 'fetch':
+          result = await handleFetch(args, requestLogger);
           break;
 
         default:
@@ -666,6 +691,99 @@ async function handleAddPersonalDataField(args: unknown, requestLogger: any) {
           field_definition: data,
           created_at: new Date().toISOString(),
         }, null, 2),
+      },
+    ],
+  };
+}
+
+// ChatGPT-specific tool handlers
+async function handleSearch(args: unknown, requestLogger: any) {
+  const params = SearchSchema.parse(args);
+
+  // Search personal data using similar logic to handleSearchPersonalData
+  const { data, error } = await supabaseAdmin
+    .from('personal_data')
+    .select('id, title, content, created_at, data_type')
+    .ilike('title', `%${params.query}%`)
+    .limit(20)
+    .order('created_at', { ascending: false });
+
+  if (error) throw new Error(`Database error: ${error.message}`);
+
+  // Transform results to ChatGPT's required format
+  const results = (data || []).map(record => ({
+    id: record.id,
+    title: record.title,
+    url: `https://datadam-mcp.onrender.com/data/${record.id}`
+  }));
+
+  // Log the search operation
+  await logDataAccess(
+    'chatgpt',
+    'READ',
+    'personal_data', 
+    undefined,
+    { search_query: params.query, results_count: results.length }
+  );
+
+  return {
+    content: [
+      {
+        type: 'text',
+        text: JSON.stringify({ results }, null, 2),
+      },
+    ],
+  };
+}
+
+async function handleFetch(args: unknown, requestLogger: any) {
+  const params = FetchSchema.parse(args);
+
+  // Fetch the specific record by ID
+  const { data, error } = await supabaseAdmin
+    .from('personal_data')
+    .select('*')
+    .eq('id', params.id)
+    .single();
+
+  if (error) {
+    if (error.code === 'PGRST116') {
+      throw new Error(`Document not found: ${params.id}`);
+    }
+    throw new Error(`Database error: ${error.message}`);
+  }
+
+  // Log the fetch operation
+  await logDataAccess(
+    'chatgpt',
+    'READ',
+    'personal_data',
+    params.id,
+    { operation: 'fetch_document' }
+  );
+
+  // Transform to ChatGPT's required format
+  const result = {
+    id: data.id,
+    title: data.title,
+    text: typeof data.content === 'object' 
+      ? JSON.stringify(data.content, null, 2) 
+      : String(data.content),
+    url: `https://datadam-mcp.onrender.com/data/${data.id}`,
+    metadata: {
+      data_type: data.data_type,
+      classification: data.classification,
+      created_at: data.created_at,
+      updated_at: data.updated_at,
+      tags: data.tags
+    }
+  };
+
+  return {
+    content: [
+      {
+        type: 'text',
+        text: JSON.stringify(result, null, 2),
       },
     ],
   };

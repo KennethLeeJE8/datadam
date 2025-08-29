@@ -235,6 +235,34 @@ export class PersonalDataMCPServer {
                 required: ['field_name', 'data_type'],
               },
             },
+            {
+              name: 'search',
+              description: 'Search through personal data for ChatGPT. Returns search results with id, title, and url for citation.',
+              inputSchema: {
+                type: 'object',
+                properties: {
+                  query: {
+                    type: 'string',
+                    description: 'Search query string',
+                  },
+                },
+                required: ['query'],
+              },
+            },
+            {
+              name: 'fetch',
+              description: 'Retrieve the full content of a specific document by ID for ChatGPT. Returns complete document with text and metadata.',
+              inputSchema: {
+                type: 'object',
+                properties: {
+                  id: {
+                    type: 'string',
+                    description: 'Unique document ID from search results',
+                  },
+                },
+                required: ['id'],
+              },
+            },
           ],
         };
       } catch (error) {
@@ -270,6 +298,28 @@ export class PersonalDataMCPServer {
                   classification: { type: 'string', default: 'personal', description: 'Data classification level' },
                 },
                 required: ['user_id', 'data_type', 'title', 'content'],
+              },
+            },
+            {
+              name: 'search',
+              description: 'Search through personal data for ChatGPT',
+              inputSchema: {
+                type: 'object',
+                properties: {
+                  query: { type: 'string', description: 'Search query string' },
+                },
+                required: ['query'],
+              },
+            },
+            {
+              name: 'fetch',
+              description: 'Retrieve full document content by ID for ChatGPT',
+              inputSchema: {
+                type: 'object',
+                properties: {
+                  id: { type: 'string', description: 'Document ID from search results' },
+                },
+                required: ['id'],
               },
             },
           ],
