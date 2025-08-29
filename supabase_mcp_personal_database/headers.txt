@@ -1,0 +1,20 @@
+HTTP/2 400 
+date: Fri, 29 Aug 2025 19:56:36 GMT
+content-type: application/json
+access-control-allow-credentials: true
+access-control-expose-headers: mcp-session-id,X-RateLimit-Limit,X-RateLimit-Remaining,X-RateLimit-Reset
+referrer-policy: strict-origin-when-cross-origin
+rndr-id: 10725c2a-897d-4d99
+vary: Origin
+vary: Accept-Encoding
+x-content-type-options: nosniff
+x-frame-options: DENY
+x-powered-by: Express
+x-render-origin-server: Render
+x-request-id: d0b65ce8-711c-4f99-be8b-5365d70a6956
+x-xss-protection: 1; mode=block
+cf-cache-status: DYNAMIC
+server: cloudflare
+cf-ray: 976e9cd49f68c35b-EWR
+alt-svc: h3=":443"; ma=86400
+

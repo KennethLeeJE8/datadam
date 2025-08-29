@@ -235,6 +235,58 @@ class HTTPMCPServer {
       });
     });
 
+    // Debug endpoint for MCP server status
+    this.app.get('/debug/mcp', (req, res) => {
+      setContentType(req, res);
+      res.status(200).json({
+        timestamp: new Date().toISOString(),
+        mcp_server: {
+          is_initialized: this.isInitialized,
+          has_mcp_server_instance: !!this.mcpServer,
+          active_transports: this.transports.size,
+          transport_sessions: Array.from(this.transports.keys())
+        },
+        tool_registry: {
+          is_initialized: this.toolRegistry ? true : false,
+          tools_count: this.toolRegistry ? this.toolRegistry.getTools().length : 0
+        },
+        environment: {
+          MCP_TRANSPORT: process.env.MCP_TRANSPORT,
+          NODE_ENV: process.env.NODE_ENV,
+          DATABASE_URL: !!process.env.DATABASE_URL ? 'SET' : 'NOT_SET',
+          SUPABASE_URL: !!process.env.SUPABASE_URL ? 'SET' : 'NOT_SET',
+          SUPABASE_SERVICE_ROLE_KEY: !!process.env.SUPABASE_SERVICE_ROLE_KEY ? 'SET' : 'NOT_SET'
+        }
+      });
+    });
+
+    // Debug endpoint to force MCP initialization and show detailed error
+    this.app.post('/debug/mcp/init', async (req, res) => {
+      setContentType(req, res);
+      try {
+        logger.info('Manual MCP initialization requested via debug endpoint');
+        await this.initializeMCPServer();
+        res.status(200).json({
+          success: true,
+          message: 'MCP server initialized successfully',
+          timestamp: new Date().toISOString(),
+          is_initialized: this.isInitialized,
+          has_mcp_server_instance: !!this.mcpServer
+        });
+      } catch (error) {
+        const err = error as Error;
+        logger.error('Manual MCP initialization failed', err, ErrorCategory.SYSTEM);
+        res.status(500).json({
+          success: false,
+          error: err.message,
+          stack: err.stack,
+          timestamp: new Date().toISOString(),
+          is_initialized: this.isInitialized,
+          has_mcp_server_instance: !!this.mcpServer
+        });
+      }
+    });
+
     // MCP endpoints
     this.app.post('/mcp', this.handleMCPPost.bind(this));
     this.app.get('/mcp', this.handleMCPGet.bind(this));
