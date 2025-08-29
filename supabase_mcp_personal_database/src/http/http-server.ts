@@ -7,6 +7,35 @@ import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/
 import { isInitializeRequest, CallToolResultSchema } from '@modelcontextprotocol/sdk/types.js';
 import dotenv from 'dotenv';
 
+// Helper function to get header value case-insensitively
+function getHeaderCaseInsensitive(headers: any, headerName: string): string | undefined {
+  const lowerHeaderName = headerName.toLowerCase();
+  for (const key in headers) {
+    if (key.toLowerCase() === lowerHeaderName) {
+      return headers[key] as string;
+    }
+  }
+  return undefined;
+}
+
+// Helper function to check if request is a notification (no id field)
+function isNotification(requestBody: any): boolean {
+  return !requestBody || requestBody.id === undefined || requestBody.id === null;
+}
+
+// Helper function to set proper Content-Type based on Accept header
+function setContentType(req: express.Request, res: express.Response, isStream: boolean = false): void {
+  const acceptHeader = getHeaderCaseInsensitive(req.headers, 'accept') || '';
+  
+  if (isStream && acceptHeader.includes('text/event-stream')) {
+    res.setHeader('Content-Type', 'text/event-stream');
+    res.setHeader('Cache-Control', 'no-cache');
+    res.setHeader('Connection', 'keep-alive');
+  } else {
+    res.setHeader('Content-Type', 'application/json');
+  }
+}
+
 import { PersonalDataMCPServer } from '../server/PersonalDataMCPServer.js';
 import { logger, ErrorCategory } from '../utils/logger.js';
 import { errorMonitoring } from '../utils/monitoring.js';
@@ -148,6 +177,7 @@ class HTTPMCPServer {
         cacheSize: parseInt(process.env.CACHE_SIZE || '100')
       };
 
+      setContentType(req, res);
       res.status(200).json({
         status: 'healthy',
         timestamp: new Date().toISOString(),
@@ -174,6 +204,7 @@ class HTTPMCPServer {
     // Metrics endpoint
     this.app.get('/metrics', (req, res) => {
       const memoryUsage = process.memoryUsage();
+      setContentType(req, res);
       res.status(200).json({
         timestamp: new Date().toISOString(),
         service: 'personal-data-mcp-server',
@@ -229,8 +260,11 @@ class HTTPMCPServer {
     });
 
     try {
-      const sessionId = req.headers['mcp-session-id'] as string;
+      const sessionId = getHeaderCaseInsensitive(req.headers, 'mcp-session-id');
       let transport: StreamableHTTPServerTransport;
+      
+      // Set proper Content-Type header
+      setContentType(req, res);
 
       if (sessionId && this.transports.has(sessionId)) {
         // Reuse existing transport
@@ -249,6 +283,8 @@ class HTTPMCPServer {
           onsessioninitialized: (sessionId: string) => {
             logger.info('Session initialized', { sessionId });
             this.transports.set(sessionId, transport);
+            // Add session ID to response headers
+            res.setHeader('Mcp-Session-Id', sessionId);
           }
         });
 
@@ -264,16 +300,35 @@ class HTTPMCPServer {
         // Connect singleton MCP server to transport
         const mcpServer = await this.getMCPServer();
         await mcpServer.getServer().connect(transport);
-        await transport.handleRequest(req as any, res, req.body);
+        
+        // Capture the response to check if it's a notification
+        const originalResponse = req.body;
+        await transport.handleRequest(req as any, res, originalResponse);
+        
+        // Handle notification responses (202 Accepted)
+        if (isNotification(originalResponse) && !res.headersSent) {
+          res.status(202).end();
+        }
         return;
       }
 
       // Handle request with existing transport
+      // Add session ID to response headers if available
+      if (sessionId) {
+        res.setHeader('Mcp-Session-Id', sessionId);
+      }
+      
       await transport.handleRequest(req as any, res, req.body);
+      
+      // Handle notification responses (202 Accepted)
+      if (isNotification(req.body) && !res.headersSent) {
+        res.status(202).end();
+      }
     } catch (error) {
       logger.error('Error handling MCP POST request', error as Error, ErrorCategory.NETWORK);
       
       if (!res.headersSent) {
+        setContentType(req, res);
         res.status(500).json({
           jsonrpc: '2.0',
           error: {
@@ -291,7 +346,7 @@ class HTTPMCPServer {
   }
 
   private async handleMCPGet(req: express.Request, res: express.Response): Promise<void> {
-    const sessionId = req.headers['mcp-session-id'] as string;
+    const sessionId = getHeaderCaseInsensitive(req.headers, 'mcp-session-id');
     
     logger.info('Received MCP GET request (SSE)', { 
       sessionId,
@@ -301,28 +356,52 @@ class HTTPMCPServer {
 
     if (!sessionId || !this.transports.has(sessionId)) {
       logger.warn('Invalid session ID for SSE request', ErrorCategory.VALIDATION, { sessionId });
-      res.status(400).send('Invalid or missing session ID');
+      setContentType(req, res);
+      res.status(400).json({
+        jsonrpc: '2.0',
+        error: {
+          code: -32002,
+          message: 'Invalid or missing session ID'
+        },
+        id: null
+      });
       return;
     }
 
-    const lastEventId = req.headers['last-event-id'] as string;
+    const lastEventId = getHeaderCaseInsensitive(req.headers, 'last-event-id');
     if (lastEventId) {
       logger.info('Client reconnecting with Last-Event-ID', { sessionId, lastEventId });
     }
 
     try {
+      // Set proper SSE headers
+      setContentType(req, res, true);
+      res.setHeader('Mcp-Session-Id', sessionId);
+      
       const transport = this.transports.get(sessionId)!;
+      
+      // Send initial data promptly to prevent client timeout
+      res.write(': MCP SSE stream established\n\n');
+      
       await transport.handleRequest(req as any, res);
     } catch (error) {
       logger.error('Error handling MCP GET request', error as Error, ErrorCategory.NETWORK);
       if (!res.headersSent) {
-        res.status(500).send('Error establishing SSE stream');
+        setContentType(req, res);
+        res.status(500).json({
+          jsonrpc: '2.0',
+          error: {
+            code: -32603,
+            message: 'Error establishing SSE stream'
+          },
+          id: null
+        });
       }
     }
   }
 
   private async handleMCPDelete(req: express.Request, res: express.Response): Promise<void> {
-    const sessionId = req.headers['mcp-session-id'] as string;
+    const sessionId = getHeaderCaseInsensitive(req.headers, 'mcp-session-id');
     
     logger.info('Received session termination request', { 
       sessionId,
@@ -332,17 +411,36 @@ class HTTPMCPServer {
 
     if (!sessionId || !this.transports.has(sessionId)) {
       logger.warn('Invalid session ID for termination request', ErrorCategory.VALIDATION, { sessionId });
-      res.status(400).send('Invalid or missing session ID');
+      setContentType(req, res);
+      res.status(400).json({
+        jsonrpc: '2.0',
+        error: {
+          code: -32002,
+          message: 'Invalid or missing session ID'
+        },
+        id: null
+      });
       return;
     }
 
     try {
+      setContentType(req, res);
+      res.setHeader('Mcp-Session-Id', sessionId);
+      
       const transport = this.transports.get(sessionId)!;
       await transport.handleRequest(req as any, res);
     } catch (error) {
       logger.error('Error handling session termination', error as Error, ErrorCategory.NETWORK);
       if (!res.headersSent) {
-        res.status(500).send('Error processing session termination');
+        setContentType(req, res);
+        res.status(500).json({
+          jsonrpc: '2.0',
+          error: {
+            code: -32603,
+            message: 'Error processing session termination'
+          },
+          id: null
+        });
       }
     }
   }
@@ -363,6 +461,7 @@ class HTTPMCPServer {
         await this.getMCPServer(); // Ensure initialized
         const tools = this.toolRegistry.getTools();
         
+        setContentType(req, res);
         res.status(200).json({
           tools: tools,
           server_info: {
@@ -387,6 +486,7 @@ class HTTPMCPServer {
         // AI Agent/MCP endpoint: Return dynamic tools 
         const dynamicTools = await this.getDynamicTools();
         
+        setContentType(req, res);
         res.status(200).json({
           tools: dynamicTools,
           server_info: {
@@ -416,6 +516,7 @@ class HTTPMCPServer {
       }
     } catch (error) {
       logger.error('Error handling tools list request', error as Error, ErrorCategory.NETWORK);
+      setContentType(req, res);
       res.status(500).json({
         error: 'Internal server error',
         message: 'Failed to retrieve tools list',
@@ -647,6 +748,7 @@ class HTTPMCPServer {
       // Check if tool exists
       const toolDef = this.toolRegistry.getTool(toolName);
       if (!toolDef) {
+        setContentType(req, res);
         res.status(404).json({
           error: 'Tool not found',
           message: `Tool '${toolName}' is not available`,
@@ -658,6 +760,7 @@ class HTTPMCPServer {
       
       // Expect MCP format: { "arguments": { ... } }
       if (!toolArgs.arguments) {
+        setContentType(req, res);
         res.status(400).json({
           error: 'Invalid MCP format',
           message: 'Expected { "arguments": {...} } format for MCP tool endpoint',
@@ -679,6 +782,7 @@ class HTTPMCPServer {
         hasResult: !!result
       });
       
+      setContentType(req, res);
       res.status(200).json({
         tool: toolName,
         success: true,
@@ -698,6 +802,7 @@ class HTTPMCPServer {
       
       // Handle different types of errors appropriately
       if (errorMessage.includes('validation') || errorMessage.includes('invalid') || errorMessage.includes('required')) {
+        setContentType(req, res);
         res.status(400).json({
           error: 'Validation Error',
           message: errorMessage,
@@ -706,6 +811,7 @@ class HTTPMCPServer {
           requestId: requestId
         });
       } else if (errorMessage.includes('Database error') || errorMessage.includes('connection')) {
+        setContentType(req, res);
         res.status(503).json({
           error: 'Service Unavailable',
           message: 'Database connection issue. Please try again.',
@@ -713,6 +819,7 @@ class HTTPMCPServer {
           requestId: requestId
         });
       } else {
+        setContentType(req, res);
         res.status(500).json({
           error: 'Internal Server Error',
           message: `Tool execution failed: ${errorMessage}`,
@@ -742,6 +849,7 @@ class HTTPMCPServer {
       // Check if tool exists
       const toolDef = this.toolRegistry.getTool(toolName);
       if (!toolDef) {
+        setContentType(req, res);
         res.status(404).json({
           error: 'Tool not found',
           message: `Tool '${toolName}' is not available`,
@@ -764,6 +872,7 @@ class HTTPMCPServer {
       });
       
       // Return just the result data for traditional API clients
+      setContentType(req, res);
       if (result && result.content && result.content[0] && result.content[0].text) {
         try {
           const parsedResult = JSON.parse(result.content[0].text);
@@ -786,6 +895,7 @@ class HTTPMCPServer {
       const errorMessage = toolError.message;
       
       // Return simple error format for traditional API clients
+      setContentType(req, res);
       if (errorMessage.includes('validation') || errorMessage.includes('invalid') || errorMessage.includes('required')) {
         res.status(400).json({
           error: 'Validation Error',
@@ -797,6 +907,7 @@ class HTTPMCPServer {
           message: 'Database connection issue. Please try again.'
         });
       } else {
+        setContentType(req, res);
         res.status(500).json({
           error: 'Internal Server Error',
           message: `Tool execution failed: ${errorMessage}`
