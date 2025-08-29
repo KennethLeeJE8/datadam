@@ -531,20 +531,16 @@ class HTTPMCPServer {
       const sessionId = randomUUID();
       logger.info('Creating new SSE session', { sessionId });
 
-      // Set proper SSE headers
-      res.setHeader('Content-Type', 'text/event-stream');
-      res.setHeader('Cache-Control', 'no-cache');
-      res.setHeader('Connection', 'keep-alive');
-      res.setHeader('Access-Control-Allow-Origin', '*');
-      res.setHeader('Access-Control-Allow-Headers', 'Cache-Control');
-      res.setHeader('Mcp-Session-Id', sessionId);
-
       // Create new transport for this SSE connection
       const transport = new StreamableHTTPServerTransport({
         sessionIdGenerator: () => sessionId,
         onsessioninitialized: (sid: string) => {
           logger.info('SSE session initialized', { sessionId: sid });
           this.transports.set(sid, transport);
+          // Set session header when session is initialized
+          if (!res.headersSent) {
+            res.setHeader('Mcp-Session-Id', sid);
+          }
         }
       });
 
@@ -568,10 +564,7 @@ class HTTPMCPServer {
       const mcpServer = await this.getMCPServer();
       await mcpServer.getServer().connect(transport);
 
-      // Send initial SSE comment to establish connection
-      res.write(': MCP SSE stream established for ChatGPT\n\n');
-
-      // Handle the SSE streaming
+      // Let the transport handle the SSE streaming and headers
       await transport.handleRequest(req as any, res);
     } catch (error) {
       logger.error('Error handling SSE request', error as Error, ErrorCategory.NETWORK);
@@ -1148,6 +1141,16 @@ class HTTPMCPServer {
   -d '{"jsonrpc": "2.0", "method": "tools/list", "id": 1}'</pre>
     </div>
     
+    <div class="endpoint">
+        <div><span class="method">GET</span> <span class="url">/sse</span></div>
+        <p><strong>ChatGPT Integration:</strong> Server-Sent Events (SSE) endpoint for ChatGPT custom connectors.</p>
+        <p>Establishes a persistent SSE stream with automatic session management for real-time MCP communication.</p>
+        <pre>curl -X GET ${baseUrl}/sse \\
+  -H "Accept: text/event-stream" \\
+  -H "Cache-Control: no-cache"</pre>
+        <p><em>Note: This endpoint is specifically designed for ChatGPT's MCP custom connector requirements. Sessions are auto-initialized and managed automatically.</em></p>
+    </div>
+    
     <h2>Claude Desktop Integration</h2>
     <div class="claude-config">
         <h3>Setup Instructions</h3>
@@ -1161,6 +1164,26 @@ class HTTPMCPServer {
     }
   }
 }</pre>
+    </div>
+    
+    <h2>ChatGPT Integration</h2>
+    <div class="claude-config">
+        <h3>Custom Connector Setup</h3>
+        <p>1. In ChatGPT, go to Settings > Personalization > Custom connectors</p>
+        <p>2. Create a new custom connector with:</p>
+        <ul>
+            <li><strong>Server URL:</strong> <code>${baseUrl}</code></li>
+            <li><strong>Transport:</strong> Server-Sent Events (SSE)</li>
+            <li><strong>Endpoint:</strong> <code>/sse</code></li>
+        </ul>
+        <p>3. The connector will automatically handle MCP protocol initialization and session management.</p>
+        <p><em>This server is fully compliant with ChatGPT's MCP custom connector requirements including:</em></p>
+        <ul>
+            <li>✅ Server-Sent Events (SSE) streaming</li>
+            <li>✅ Automatic session initialization</li>
+            <li>✅ Case-insensitive header handling</li>
+            <li>✅ Proper Content-Type negotiation</li>
+        </ul>
     </div>
     
     <h2>Available Tools</h2>
