@@ -516,7 +516,7 @@ class HTTPMCPServer {
           ip: req.ip 
         });
         setContentType(req, res);
-        return res.status(406).json({
+        res.status(406).json({
           jsonrpc: '2.0',
           error: {
             code: -32000,
@@ -524,6 +524,7 @@ class HTTPMCPServer {
           },
           id: null
         });
+        return;
       }
 
       // Generate new session for SSE connection
